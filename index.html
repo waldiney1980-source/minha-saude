@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=5">
+<title>Minha Saúde — exames, alimentação e atividade</title>
+<meta name="description" content="Controle pessoal de saúde: exames de laboratório, refeições com cálculo de calorias por foto, atividades físicas e avaliação por IA.">
+<meta name="theme-color" content="#101614" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6faf8" media="(prefers-color-scheme: light)">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Minha Saúde">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icons/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icons/icon-180.png">
+<link rel="stylesheet" href="./css/app.css">
+</head>
+<body>
+
+<!-- Tela de entrada (login/cadastro) -->
+<div id="auth" class="auth" hidden>
+  <div class="auth__card">
+    <div class="auth__mark" aria-hidden="true">
+      <svg viewBox="0 0 64 64" width="56" height="56">
+        <defs><linearGradient id="ag" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#18b06b"/><stop offset="1" stop-color="#0e8f8f"/>
+        </linearGradient></defs>
+        <rect width="64" height="64" rx="15" fill="url(#ag)"/>
+        <path d="M32 47.5C22.6 41 15.5 34.9 15.5 27.4c0-5 3.9-8.9 8.8-8.9 3.2 0 6 1.7 7.7 4.4 1.7-2.7 4.5-4.4 7.7-4.4 4.9 0 8.8 3.9 8.8 8.9 0 7.5-7.1 13.6-16.5 20.1Z" fill="#fff"/>
+        <path d="M18 32h7l2.6-6 4.4 12 3.4-8 2 2h9" fill="none" stroke="url(#ag)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </div>
+    <h1>Minha Saúde</h1>
+    <p class="auth__sub">Exames, alimentação e atividade física em um só lugar.</p>
+    <form id="auth-form">
+      <label>E-mail
+        <input type="email" id="auth-email" autocomplete="email" required inputmode="email">
+      </label>
+      <label>Senha
+        <input type="password" id="auth-senha" autocomplete="current-password" required minlength="6">
+      </label>
+      <p class="auth__erro" id="auth-erro" hidden></p>
+      <button type="submit" class="btn btn--primario" id="auth-entrar">Entrar</button>
+      <button type="button" class="btn btn--fantasma" id="auth-criar">Criar conta</button>
+    </form>
+    <p class="auth__aviso">Seus dados são privados: cada conta enxerga apenas os próprios registros.</p>
+  </div>
+</div>
+
+<!-- Aplicativo -->
+<div id="app" class="app" hidden>
+  <header class="topo">
+    <div class="topo__marca">
+      <svg viewBox="0 0 64 64" width="28" height="28" aria-hidden="true">
+        <defs><linearGradient id="tg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stop-color="#18b06b"/><stop offset="1" stop-color="#0e8f8f"/>
+        </linearGradient></defs>
+        <rect width="64" height="64" rx="15" fill="url(#tg)"/>
+        <path d="M32 47.5C22.6 41 15.5 34.9 15.5 27.4c0-5 3.9-8.9 8.8-8.9 3.2 0 6 1.7 7.7 4.4 1.7-2.7 4.5-4.4 7.7-4.4 4.9 0 8.8 3.9 8.8 8.9 0 7.5-7.1 13.6-16.5 20.1Z" fill="#fff"/>
+        <path d="M18 32h7l2.6-6 4.4 12 3.4-8 2 2h9" fill="none" stroke="url(#tg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div><h1 id="titulo">Hoje</h1><p id="subtitulo"></p></div>
+    </div>
+    <button class="topo__sync" id="btn-sync" title="Recarregar dados">
+      <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </header>
+
+  <main id="view" class="view" tabindex="-1"></main>
+
+  <nav class="abas" aria-label="Navegação">
+    <button data-aba="hoje" class="ativa"><svg viewBox="0 0 24 24"><path d="M3 11.5 12 4l9 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M5.5 10.5V20h13v-9.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Hoje</span></button>
+    <button data-aba="exames"><svg viewBox="0 0 24 24"><path d="M9 3h6M10 3v5.2L4.8 17a3 3 0 0 0 2.7 4.4h9a3 3 0 0 0 2.7-4.4L14 8.2V3" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M7.5 14.5h9" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Exames</span></button>
+    <button data-aba="evolucao"><svg viewBox="0 0 24 24"><path d="M4 19V5M4 19h16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><path d="m7 14 4-5 3 3 5-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Evolução</span></button>
+    <button data-aba="saude"><svg viewBox="0 0 24 24"><path d="M12 20.5C5.8 16.2 3 12.6 3 8.9 3 6.2 5.1 4 7.8 4c1.7 0 3.3.9 4.2 2.3C12.9 4.9 14.5 4 16.2 4 18.9 4 21 6.2 21 8.9c0 3.7-2.8 7.3-9 11.6Z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M6 11h3l1.5-3 2.5 6 1.5-3.5H18" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>Saúde</span></button>
+    <button data-aba="perfil"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" fill="none" stroke="currentColor" stroke-width="2"/><path d="M4.5 20a7.5 7.5 0 0 1 15 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg><span>Perfil</span></button>
+  </nav>
+</div>
+
+<div id="splash" class="splash"><p>Carregando…</p></div>
+<div id="toasts" class="toasts" role="status" aria-live="polite"></div>
+<div id="modal-root"></div>
+
+<script type="module" src="./js/app.js"></script>
+</body>
+</html>
