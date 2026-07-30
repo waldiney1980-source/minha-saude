@@ -578,7 +578,10 @@ function telaExames(v) {
   v.innerHTML = `
     <section class="cartao">
       <header class="cartao__cab"><h2>Meus exames</h2>
-        <button class="btn btn--mini" id="add-exame">+ Lançar exame</button>
+        <div class="acoes">
+          <button class="btn btn--mini btn--ia" id="importar-laudo">📄 Importar laudo</button>
+          <button class="btn btn--mini btn--fantasma" id="add-exame">+ Lançar</button>
+        </div>
       </header>
       ${datas.length ? datas.map((d) => `
         <h3 class="grupo-data">${fmtData(d)}</h3>
@@ -597,10 +600,143 @@ function telaExames(v) {
     </section>`;
 
   $('#add-exame', v).onclick = () => modalExame();
+  $('#importar-laudo', v).onclick = () => modalImportarLaudo();
   $$('[data-ex]', v).forEach((li) => li.onclick = () => {
     const e = st.exames.find((x) => x.id === li.dataset.ex);
     if (e) modalExame(e);
   });
+}
+
+/* ---------- importação de laudo (PDF ou foto) ---------- */
+
+function modalImportarLaudo() {
+  let arquivo = null;       // base64 sem prefixo
+  let mediaType = 'pdf';
+  let extraidos = [];       // [{exame, valor, unidade, ref_min, ref_max, incluir}]
+
+  const caixa = modal(`
+    <header class="modal__cab"><h2>Importar laudo de exames</h2>
+      <button class="icone" data-fechar>✕</button></header>
+    <div class="form">
+      <p class="nota">Envie o <b>PDF do laudo</b> do laboratório (ou uma foto nítida dele).
+      A IA lê o documento, lista os exames com valores e faixas de referência, e você revisa antes de salvar.</p>
+      <input type="file" id="arq-laudo" accept="application/pdf,image/*" hidden>
+      <div class="foto-botoes" style="display:flex;gap:8px">
+        <button type="button" class="btn btn--fantasma" id="b-escolher">📄 Escolher arquivo</button>
+        <button type="button" class="btn btn--ia" id="b-extrair" disabled>✨ Ler laudo</button>
+      </div>
+      <p class="nota" id="nome-arquivo"></p>
+      <div id="laudo-resultado"></div>
+    </div>`);
+
+  const bExtrair = $('#b-extrair', caixa);
+
+  $('#b-escolher', caixa).onclick = () => $('#arq-laudo', caixa).click();
+  $('#arq-laudo', caixa).onchange = async (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    try {
+      if (f.type === 'application/pdf') {
+        if (f.size > 10 * 1024 * 1024) throw new Error('PDF muito grande (máx. 10 MB).');
+        mediaType = 'pdf';
+        arquivo = await new Promise((res, rej) => {
+          const r = new FileReader();
+          r.onload = () => res(String(r.result).split(',')[1]);
+          r.onerror = () => rej(new Error('Não consegui ler o arquivo.'));
+          r.readAsDataURL(f);
+        });
+      } else {
+        mediaType = 'jpeg';
+        arquivo = (await comprimir(f, 1800, 0.85)).split(',')[1];
+      }
+      $('#nome-arquivo', caixa).textContent = `Arquivo: ${f.name}`;
+      bExtrair.disabled = false;
+    } catch (er) { toast(er.message, 'erro'); }
+  };
+
+  const desenharExtraidos = (dataExame) => {
+    const area = $('#laudo-resultado', caixa);
+    if (!extraidos.length) { area.innerHTML = ''; return; }
+    area.innerHTML = `
+      <div class="itens-ia">
+        <p class="itens-ia__titulo">Exames encontrados — desmarque o que não quiser salvar:</p>
+        ${extraidos.map((x, i) => `
+          <label class="laudo-item" data-i="${i}">
+            <input type="checkbox" ${x.incluir ? 'checked' : ''}>
+            <span class="laudo-item__nome"><b>${esc(x.exame)}</b>
+              <small>${x.ref_min !== null || x.ref_max !== null ? `ref.: ${x.ref_min ?? '—'} a ${x.ref_max ?? '—'}` : 'sem referência'}</small></span>
+            <span class="item__valor">${x.valor} ${esc(x.unidade)}</span>
+          </label>`).join('')}
+      </div>
+      <label>Data dos exames
+        <input type="date" id="data-laudo" value="${dataExame || hojeISO()}">
+      </label>
+      <footer class="modal__pe">
+        <span class="espaco"></span>
+        <button type="button" class="btn btn--fantasma" data-fechar>Cancelar</button>
+        <button type="button" class="btn btn--primario" id="b-salvar-laudo">Salvar e avaliar</button>
+      </footer>`;
+    $$('.laudo-item input', area).forEach((cb, i) => cb.onchange = () => { extraidos[i].incluir = cb.checked; });
+    $$('[data-fechar]', area).forEach((b) => b.onclick = fecharModal);
+
+    $('#b-salvar-laudo', area).onclick = async () => {
+      const data = $('#data-laudo', area).value || hojeISO();
+      const selecionados = extraidos.filter((x) => x.incluir);
+      if (!selecionados.length) { toast('Nenhum exame selecionado.', 'erro'); return; }
+      const b = $('#b-salvar-laudo', area);
+      b.disabled = true; b.textContent = 'Salvando…';
+      try {
+        for (const x of selecionados) {
+          const salvo = await sb.inserir('sau_exames', {
+            exame: x.exame, valor: x.valor, unidade: x.unidade,
+            ref_min: x.ref_min, ref_max: x.ref_max, data, obs: 'importado de laudo',
+          });
+          st.exames.unshift(salvo);
+        }
+        st.exames.sort((a, b2) => String(b2.data).localeCompare(String(a.data)));
+        fecharModal();
+        toast(`${selecionados.length} exame(s) salvos. Gerando avaliação…`);
+        irPara('saude');
+        gerarAvaliacao();
+      } catch (er) {
+        toast(er.message, 'erro');
+        b.disabled = false; b.textContent = 'Salvar e avaliar';
+      }
+    };
+  };
+
+  bExtrair.onclick = async () => {
+    if (!arquivo) return;
+    bExtrair.disabled = true; bExtrair.textContent = 'Lendo laudo…';
+    try {
+      const resp = await sb.ia({ acao: 'exames', arquivo, mediaType }, 180000);
+      const res = resp.resultado || {};
+      // faixas: zero ou negativo = "não informado" (ex.: "inferior a 190" não tem mínimo)
+      const ref = (v) => { const n = num(v); return n != null && n > 0 ? n : null; };
+      extraidos = (res.exames || []).map((x) => {
+        let mn = ref(x.ref_min), mx = ref(x.ref_max);
+        if (mn != null && mx != null && mx < mn) mx = null;
+        return {
+          exame: String(x.exame || '').trim() || 'Exame',
+          valor: Number(x.valor),
+          unidade: String(x.unidade || '').trim(),
+          ref_min: mn,
+          ref_max: mx,
+          incluir: true,
+        };
+      }).filter((x) => Number.isFinite(x.valor));
+      const dataExame = /^\d{4}-\d{2}-\d{2}$/.test(res.data_exame || '') ? res.data_exame : '';
+      desenharExtraidos(dataExame);
+      if (!extraidos.length) toast(res.observacao || 'Nenhum exame encontrado no documento.', 'erro');
+      else if (res.observacao) toast(res.observacao, 'info');
+    } catch (er) {
+      toast('Leitura falhou: ' + er.message, 'erro');
+    } finally {
+      bExtrair.disabled = false; bExtrair.textContent = '✨ Ler laudo';
+    }
+  };
+
+  $$('[data-fechar]', caixa).forEach((b) => b.onclick = fecharModal);
 }
 
 function modalExame(e = null) {
@@ -842,22 +978,29 @@ function telaSaude(v) {
 
     <p class="nota nota--central">⚠️ Este aplicativo é informativo e não substitui consulta, diagnóstico ou tratamento médico.</p>`;
 
-  $('#b-avaliar', v).onclick = async () => {
-    const b = $('#b-avaliar', v);
-    b.disabled = true; b.textContent = 'Analisando…';
-    try {
-      const resp = await sb.ia({ acao: 'avaliacao', dados: dadosParaIA() }, 120000);
-      st.avaliacaoIA = resp.avaliacao || '';
-      st.avaliacaoQuando = new Date().toLocaleString('pt-BR');
-      localStorage.setItem('saude.avaliacao', st.avaliacaoIA);
-      localStorage.setItem('saude.avaliacaoQuando', st.avaliacaoQuando);
-      $('#ia-saida', v).innerHTML = md(st.avaliacaoIA) + `<p class="nota">Gerada em ${st.avaliacaoQuando}.</p>`;
-    } catch (e) {
-      toast('Não consegui gerar a análise: ' + e.message, 'erro');
-    } finally {
-      b.disabled = false; b.textContent = '✨ Gerar análise';
-    }
-  };
+  $('#b-avaliar', v).onclick = () => gerarAvaliacao();
+}
+
+/** Gera a avaliação por IA; usada pelo botão da aba Saúde e após importar laudo. */
+async function gerarAvaliacao() {
+  const b = $('#b-avaliar');
+  if (b) { b.disabled = true; b.textContent = 'Analisando…'; }
+  const saida = $('#ia-saida');
+  if (saida) saida.innerHTML = '<p class="vazio">Cruzando seus exames, perfil e hábitos…</p>';
+  try {
+    const resp = await sb.ia({ acao: 'avaliacao', dados: dadosParaIA() }, 120000);
+    st.avaliacaoIA = resp.avaliacao || '';
+    st.avaliacaoQuando = new Date().toLocaleString('pt-BR');
+    localStorage.setItem('saude.avaliacao', st.avaliacaoIA);
+    localStorage.setItem('saude.avaliacaoQuando', st.avaliacaoQuando);
+    if ($('#ia-saida')) $('#ia-saida').innerHTML = md(st.avaliacaoIA) + `<p class="nota">Gerada em ${st.avaliacaoQuando}.</p>`;
+  } catch (e) {
+    toast('Não consegui gerar a análise: ' + e.message, 'erro');
+    if ($('#ia-saida')) $('#ia-saida').innerHTML = '<p class="vazio">A análise falhou — tente de novo.</p>';
+  } finally {
+    const b2 = $('#b-avaliar');
+    if (b2) { b2.disabled = false; b2.textContent = '✨ Gerar análise'; }
+  }
 }
 
 const cartaoInd = (titulo, valor, sub, cor) => `

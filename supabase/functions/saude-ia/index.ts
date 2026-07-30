@@ -3,6 +3,7 @@
 //
 // Ações:
 //   { acao: "refeicao", imagem, mediaType, descricao? }  → itens e calorias da foto
+//   { acao: "exames", arquivo, mediaType }                → extrai exames de laudo (PDF ou foto)
 //   { acao: "avaliacao", dados }                          → avaliação de saúde em texto
 //
 // Provedor escolhido pelo segredo configurado, na ordem:
@@ -57,6 +58,45 @@ const SCHEMA_REFEICAO = {
     observacao: { type: "string" },
   },
   required: ["itens", "total_calorias", "confianca", "observacao"],
+};
+
+const PROMPT_EXAMES = [
+  "Você é um assistente que transcreve laudos de exames laboratoriais brasileiros.",
+  "O documento é um laudo/resultado de exames de laboratório do próprio usuário.",
+  "Extraia TODOS os resultados numéricos: nome do exame, valor, unidade e a faixa de",
+  "referência impressa no próprio laudo (mínimo e máximo, quando houver).",
+  "Use o nome usual do exame em português (ex.: 'Glicose em jejum', 'Colesterol total',",
+  "'HDL', 'LDL', 'Triglicerídeos', 'Hemoglobina glicada (HbA1c)', 'TSH', 'Creatinina').",
+  "Números no padrão brasileiro: converta vírgula decimal para ponto.",
+  "ref_min e ref_max são strings com o número, ou string vazia se o laudo não trouxer",
+  "(ex.: referência 'inferior a 190' → ref_min: '', ref_max: '190').",
+  "data_exame é a data da coleta/emissão no formato AAAA-MM-DD, ou string vazia.",
+  "Resultados não numéricos (ex.: 'Negativo') NÃO entram na lista — cite-os em 'observacao'.",
+  "Se o documento não for um laudo de exames, devolva a lista vazia e explique em 'observacao'.",
+  "Responda em português do Brasil.",
+].join(" ");
+
+const SCHEMA_EXAMES = {
+  type: "object",
+  properties: {
+    data_exame: { type: "string" },
+    exames: {
+      type: "array",
+      items: {
+        type: "object",
+        properties: {
+          exame: { type: "string" },
+          valor: { type: "number" },
+          unidade: { type: "string" },
+          ref_min: { type: "string" },
+          ref_max: { type: "string" },
+        },
+        required: ["exame", "valor", "unidade", "ref_min", "ref_max"],
+      },
+    },
+    observacao: { type: "string" },
+  },
+  required: ["data_exame", "exames", "observacao"],
 };
 
 const PROMPT_AVALIACAO = [
@@ -248,6 +288,33 @@ Deno.serve(async (req) => {
       return json({ ok: true, model: r.model, resultado: JSON.parse(r.texto) });
     }
 
+    if (body.acao === "exames") {
+      const base64 = String(body.arquivo || "").replace(/^data:[\w/.+-]+;base64,/, "");
+      if (!base64) return json({ error: "Envie o arquivo em base64." }, 400);
+      if (base64.length > 14_000_000) return json({ error: "Arquivo muito grande (máx. ~10 MB)." }, 400);
+      const tipos: Record<string, string> = {
+        pdf: "application/pdf", jpeg: "image/jpeg", png: "image/png", webp: "image/webp",
+      };
+      const mime = tipos[String(body.mediaType)] || "application/pdf";
+
+      let r: { texto: string; model: string };
+      if (googleKey) {
+        r = await comGemini(googleKey, [
+          { inline_data: { mime_type: mime, data: base64 } },
+          { text: PROMPT_EXAMES },
+        ], schemaGemini(SCHEMA_EXAMES), 8192);
+      } else {
+        const bloco = mime === "application/pdf"
+          ? { type: "document", source: { type: "base64", media_type: mime, data: base64 } }
+          : { type: "image", source: { type: "base64", media_type: mime, data: base64 } };
+        r = await comClaude(anthropicKey!, [
+          bloco,
+          { type: "text", text: PROMPT_EXAMES },
+        ], SCHEMA_EXAMES, 8192);
+      }
+      return json({ ok: true, model: r.model, resultado: JSON.parse(r.texto) });
+    }
+
     if (body.acao === "avaliacao") {
       const dados = JSON.stringify(body.dados || {}).slice(0, 60_000);
       const texto = `${PROMPT_AVALIACAO}\n\nDados do usuário:\n${dados}`;
@@ -261,7 +328,7 @@ Deno.serve(async (req) => {
       return json({ ok: true, model: r.model, avaliacao: r.texto });
     }
 
-    return json({ error: "Ação desconhecida. Use 'refeicao' ou 'avaliacao'." }, 400);
+    return json({ error: "Ação desconhecida. Use 'refeicao', 'exames' ou 'avaliacao'." }, 400);
   } catch (e) {
     return json({ error: e instanceof Error ? e.message : String(e) }, 500);
   }
