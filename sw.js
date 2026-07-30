@@ -1,6 +1,6 @@
 // Minha Saúde — service worker: casca do app em cache, dados sempre da rede.
 
-const CACHE = 'minha-saude-v2';
+const CACHE = 'minha-saude-v3';
 const CASCA = [
   './',
   './index.html',
@@ -22,6 +22,26 @@ self.addEventListener('activate', (e) => {
     caches.keys()
       .then((chaves) => Promise.all(chaves.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
+  );
+});
+
+/* Lembretes de água (Web Push). */
+self.addEventListener('push', (e) => {
+  let d = {};
+  try { d = e.data.json(); } catch { d = { body: e.data && e.data.text() }; }
+  e.waitUntil(self.registration.showNotification(d.title || 'Minha Saúde', {
+    body: d.body || '',
+    tag: d.tag || 'minha-saude',
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+  }));
+});
+
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true })
+      .then((lista) => (lista.length ? lista[0].focus() : clients.openWindow('./'))),
   );
 });
 

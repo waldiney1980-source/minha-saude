@@ -124,3 +124,14 @@ export const salvarPerfil = (dados) =>
 /** Edge Function de IA (foto de refeição e avaliação de saúde). */
 export const ia = (payload, timeout = 90000) =>
   pedir('/functions/v1/saude-ia', { method: 'POST', body: payload, timeout });
+
+/** Edge Function de notificações (lembrete de água). */
+export const push = (payload, timeout = 30000) =>
+  pedir('/functions/v1/saude-push', { method: 'POST', body: payload, timeout });
+
+/** Grava/atualiza a inscrição de push deste aparelho (upsert por user_id+endpoint). */
+export const salvarInscricao = (linha) =>
+  pedir('/rest/v1/sau_push?on_conflict=user_id,endpoint', {
+    method: 'POST', body: linha,
+    headers: { Prefer: 'resolution=merge-duplicates,return=representation' },
+  }).then((r) => (Array.isArray(r) ? r[0] : r));

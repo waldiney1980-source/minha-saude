@@ -96,23 +96,107 @@ const st = {
   exames: [],
   refeicoes: [],
   atividades: [],
+  agua: [],
+  clima: null,
   avaliacaoIA: localStorage.getItem('saude.avaliacao') || '',
   avaliacaoQuando: localStorage.getItem('saude.avaliacaoQuando') || '',
 };
 
 async function carregarTudo() {
-  const [perfil, medidas, exames, refeicoes, atividades] = await Promise.all([
+  const [perfil, medidas, exames, refeicoes, atividades, agua] = await Promise.all([
     sb.listar('sau_perfil', 'select=*&limit=1'),
     sb.listar('sau_medidas', 'select=*&order=data.desc,criado_em.desc&limit=500'),
     sb.listar('sau_exames', 'select=*&order=data.desc,criado_em.desc&limit=1000'),
     sb.listar('sau_refeicoes', 'select=*&order=quando.desc&limit=800'),
     sb.listar('sau_atividades', 'select=*&order=data.desc&limit=800'),
+    sb.listar('sau_agua', 'select=*&order=quando.desc&limit=1500'),
   ]);
   st.perfil = (perfil && perfil[0]) || null;
   st.medidas = medidas || [];
   st.exames = exames || [];
   st.refeicoes = refeicoes || [];
   st.atividades = atividades || [];
+  st.agua = agua || [];
+}
+
+/* ============ clima e água ============ */
+
+/** Temperatura máxima do dia (Open-Meteo), com cache diário e localização opcional. */
+async function climaHoje() {
+  const hoje = hojeISO();
+  try {
+    const cache = JSON.parse(localStorage.getItem('saude.clima') || 'null');
+    if (cache && cache.dia === hoje) return cache;
+  } catch { /* cache inválido */ }
+  let lat = -22.9, lon = -43.2, local = 'Rio de Janeiro';
+  try {
+    const pos = await new Promise((res, rej) =>
+      navigator.geolocation.getCurrentPosition(res, rej, { timeout: 6000, maximumAge: 3600e3 }));
+    lat = pos.coords.latitude; lon = pos.coords.longitude; local = 'sua região';
+  } catch { /* sem localização: usa Rio */ }
+  const r = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max&timezone=auto&forecast_days=1`);
+  const d = await r.json();
+  const clima = { dia: hoje, tmax: Math.round(Number(d?.daily?.temperature_2m_max?.[0])) || null, local };
+  localStorage.setItem('saude.clima', JSON.stringify(clima));
+  return clima;
+}
+
+const aguaDo = (dia) => st.agua.filter((a) => dataLocal(a.quando) === dia);
+const aguaHoje = () => aguaDo(hojeISO()).reduce((s, a) => s + (Number(a.ml) || 0), 0);
+
+/** Meta de água: 35 ml/kg + calor do dia + atividade física de hoje. */
+function metaAgua() {
+  const p = pesoAtual() || 70;
+  let ml = p * 35;
+  const t = st.clima?.tmax;
+  if (t != null) {
+    if (t >= 32) ml += 700;
+    else if (t >= 28) ml += 500;
+    else if (t >= 24) ml += 250;
+  }
+  const minAtv = atividadesDo(hojeISO()).reduce((s, a) => s + (Number(a.duracao_min) || 0), 0);
+  ml += Math.round((minAtv / 60) * 400);
+  return Math.round(ml / 50) * 50;
+}
+
+function mediaAgua(nDias = 7) {
+  const porDia = {};
+  const limite = Date.now() - nDias * 864e5;
+  for (const a of st.agua) {
+    if (new Date(a.quando).getTime() < limite) continue;
+    const d = dataLocal(a.quando);
+    porDia[d] = (porDia[d] || 0) + (Number(a.ml) || 0);
+  }
+  const dias = Object.keys(porDia);
+  if (!dias.length) return null;
+  return dias.reduce((s, d) => s + porDia[d], 0) / dias.length;
+}
+
+/* ============ proteína ============ */
+
+/** Meta diária de proteína (g): g/kg pelo nível de atividade, ajustada pelo objetivo. */
+function metaProteina() {
+  const p = pesoAtual();
+  if (!p) return null;
+  let fator = { sedentario: 1.0, leve: 1.2, moderado: 1.4, intenso: 1.7 }[st.perfil?.nivel_atividade] || 1.2;
+  if (st.perfil?.objetivo === 'perder' || st.perfil?.objetivo === 'ganhar') fator += 0.2;
+  return Math.round(p * Math.min(fator, 2.0));
+}
+
+const proteinaDo = (dia) =>
+  refeicoesDo(dia).reduce((s, r) => s + (Number(r.proteinas_g) || 0), 0);
+
+function mediaProteina(nDias = 7) {
+  const porDia = {};
+  const limite = Date.now() - nDias * 864e5;
+  for (const r of st.refeicoes) {
+    if (new Date(r.quando).getTime() < limite || r.proteinas_g == null) continue;
+    const d = dataLocal(r.quando);
+    porDia[d] = (porDia[d] || 0) + (Number(r.proteinas_g) || 0);
+  }
+  const dias = Object.keys(porDia);
+  if (!dias.length) return null;
+  return dias.reduce((s, d) => s + porDia[d], 0) / dias.length;
 }
 
 /* ============ cálculos de saúde ============ */
@@ -258,6 +342,16 @@ function telaHoje(v) {
   const meta = metaCalorias();
   const pct = meta ? Math.min(100, Math.round((consumido / meta) * 100)) : 0;
   const restante = meta ? Math.round(meta - consumido) : null;
+  const protHoje = Math.round(proteinaDo(dia));
+  const protMeta = metaProteina();
+  const agua = aguaHoje();
+  const aguaMeta = metaAgua();
+  const aguaPct = Math.min(100, Math.round((agua / aguaMeta) * 100));
+  const t = st.clima?.tmax;
+
+  if (!st.clima) {
+    climaHoje().then((c) => { st.clima = c; if (st.aba === 'hoje') render(); }).catch(() => {});
+  }
 
   v.innerHTML = `
     <section class="cartao resumo">
@@ -267,7 +361,24 @@ function telaHoje(v) {
       <div class="resumo__info">
         <p><b>Meta:</b> ${meta ? kcal(meta) : '<a href="#" data-ir="perfil">complete o perfil</a>'}</p>
         <p><b>Atividade:</b> ${kcal(gastoAtv)} gastos</p>
+        <p><b>Proteína:</b> ${protHoje} g${protMeta ? ` de ${protMeta} g` : ''}</p>
         ${restante != null ? `<p class="${restante < 0 ? 'texto-ruim' : 'texto-bom'}">${restante >= 0 ? `Restam ${kcal(restante)}` : `${kcal(-restante)} acima da meta`}</p>` : ''}
+      </div>
+    </section>
+
+    <section class="cartao">
+      <header class="cartao__cab"><h2>Água 💧</h2>
+        <button class="btn btn--mini btn--fantasma" id="b-lembretes">🔔 Lembretes</button>
+      </header>
+      <div class="agua-barra"><div class="agua-barra__cheio" style="width:${aguaPct}%"></div></div>
+      <p class="agua-info"><b>${agua} ml</b> de <b>${aguaMeta} ml</b>
+        ${t != null ? ` · máx. de <b>${t}°C</b> hoje${t >= 28 ? ' — dia quente, hidrate-se mais!' : ''}` : ''}</p>
+      <p class="nota">Meta calculada pelo seu peso${t != null ? ', pela temperatura do dia' : ''} e pela atividade física de hoje.</p>
+      <div class="agua-botoes">
+        <button class="btn btn--mini" data-agua="200">+ Copo (200)</button>
+        <button class="btn btn--mini" data-agua="300">+ Copo (300)</button>
+        <button class="btn btn--mini" data-agua="500">+ Garrafa (500)</button>
+        ${aguaDo(dia).length ? '<button class="btn btn--mini btn--fantasma" id="b-agua-desfazer">Desfazer</button>' : ''}
       </div>
     </section>
 
@@ -293,8 +404,160 @@ function telaHoje(v) {
   $('#add-foto', v).onclick = () => modalRefeicao({ comFoto: true });
   $('#add-manual', v).onclick = () => modalRefeicao({});
   $('#add-atv', v).onclick = () => modalAtividade();
+  $('#b-lembretes', v).onclick = () => modalLembretes();
+  $$('[data-agua]', v).forEach((b) => b.onclick = async () => {
+    b.disabled = true;
+    try {
+      const salvo = await sb.inserir('sau_agua', { ml: Number(b.dataset.agua) });
+      st.agua.unshift(salvo);
+      render();
+    } catch (e) { toast(e.message, 'erro'); b.disabled = false; }
+  });
+  const desfazer = $('#b-agua-desfazer', v);
+  if (desfazer) desfazer.onclick = async () => {
+    const ultimo = aguaDo(hojeISO()).sort((a, b) => new Date(b.quando) - new Date(a.quando))[0];
+    if (!ultimo) return;
+    try {
+      await sb.apagar('sau_agua', ultimo.id);
+      st.agua = st.agua.filter((x) => x.id !== ultimo.id);
+      render();
+    } catch (e) { toast(e.message, 'erro'); }
+  };
   $$('[data-ir]', v).forEach((a) => a.onclick = (e) => { e.preventDefault(); irPara(a.dataset.ir); });
   ligarListas(v);
+}
+
+/* ---------- lembretes de água (notificações push) ---------- */
+
+const VAPID_PUBLICA = 'BAycI82h47oSmMOdpXpWnAQc5zZuYa4JqK7VsVdTbNj3AqfGMZxmWCDgUMiBnGFRVG_jaj3PnJ1QMHyw55EWzg8';
+
+function b64paraBytes(b64) {
+  const padding = '='.repeat((4 - (b64.length % 4)) % 4);
+  const bruto = atob((b64 + padding).replace(/-/g, '+').replace(/_/g, '/'));
+  return Uint8Array.from(bruto, (c) => c.charCodeAt(0));
+}
+
+async function inscricaoAtual() {
+  const reg = await navigator.serviceWorker.ready;
+  return reg.pushManager.getSubscription();
+}
+
+function modalLembretes() {
+  const suportado = 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  const iosForaDoApp = /iphone|ipad/i.test(navigator.userAgent)
+    && !window.matchMedia('(display-mode: standalone)').matches;
+
+  const caixa = modal(`
+    <header class="modal__cab"><h2>Lembretes de água</h2>
+      <button class="icone" data-fechar>✕</button></header>
+    <div class="form">
+      ${!suportado ? '<p class="nota">Este navegador não suporta notificações push.</p>' : ''}
+      ${iosForaDoApp ? '<p class="nota">📌 No iPhone, primeiro <b>instale o app</b> (Compartilhar → Adicionar à Tela de Início) e ative os lembretes por lá — o iOS só permite notificações para apps instalados.</p>' : ''}
+      <p class="nota">Você recebe uma notificação no aparelho lembrando de beber água, no intervalo e horário que escolher — mesmo com o app fechado.</p>
+      <div class="linha2">
+        <label>A cada
+          <select id="lem-intervalo">
+            <option value="60">1 hora</option>
+            <option value="120" selected>2 horas</option>
+            <option value="180">3 horas</option>
+          </select>
+        </label>
+        <label>Entre
+          <span style="display:flex;gap:6px;align-items:center">
+            <input id="lem-inicio" inputmode="numeric" value="8" style="width:52px;text-align:center">h e
+            <input id="lem-fim" inputmode="numeric" value="22" style="width:52px;text-align:center">h
+          </span>
+        </label>
+      </div>
+      <p class="nota" id="lem-estado">Verificando…</p>
+      <footer class="modal__pe">
+        <button type="button" class="btn btn--fantasma" id="lem-testar" hidden>Enviar teste</button>
+        <span class="espaco"></span>
+        <button type="button" class="btn btn--perigo" id="lem-desativar" hidden>Desativar</button>
+        <button type="button" class="btn btn--primario" id="lem-ativar" ${suportado ? '' : 'disabled'}>Ativar lembretes</button>
+      </footer>
+    </div>`);
+
+  $$('[data-fechar]', caixa).forEach((b) => b.onclick = fecharModal);
+  const estado = $('#lem-estado', caixa);
+  const bAtivar = $('#lem-ativar', caixa);
+  const bDesativar = $('#lem-desativar', caixa);
+  const bTestar = $('#lem-testar', caixa);
+
+  (async () => {
+    if (!suportado) { estado.textContent = 'Sem suporte neste navegador.'; return; }
+    try {
+      const sub = await inscricaoAtual();
+      if (!sub) { estado.textContent = 'Lembretes desativados neste aparelho.'; return; }
+      const linhas = await sb.listar('sau_push', `select=*&endpoint=eq.${encodeURIComponent(sub.endpoint)}`);
+      const cfg = linhas && linhas[0];
+      if (cfg && cfg.ativo) {
+        estado.textContent = `Ativos neste aparelho: a cada ${cfg.intervalo_min / 60}h, das ${cfg.hora_inicio}h às ${cfg.hora_fim}h.`;
+        $('#lem-intervalo', caixa).value = String(cfg.intervalo_min);
+        $('#lem-inicio', caixa).value = cfg.hora_inicio;
+        $('#lem-fim', caixa).value = cfg.hora_fim;
+        bDesativar.hidden = false;
+        bTestar.hidden = false;
+        bAtivar.textContent = 'Salvar alterações';
+      } else {
+        estado.textContent = 'Lembretes desativados neste aparelho.';
+      }
+    } catch { estado.textContent = 'Lembretes desativados neste aparelho.'; }
+  })();
+
+  bAtivar.onclick = async () => {
+    bAtivar.disabled = true; bAtivar.textContent = 'Ativando…';
+    try {
+      const perm = await Notification.requestPermission();
+      if (perm !== 'granted') throw new Error('Permissão de notificação negada. Libere nas configurações do navegador.');
+      const reg = await navigator.serviceWorker.ready;
+      let sub = await reg.pushManager.getSubscription();
+      if (!sub) {
+        sub = await reg.pushManager.subscribe({
+          userVisibleOnly: true,
+          applicationServerKey: b64paraBytes(VAPID_PUBLICA),
+        });
+      }
+      const intervalo = Number($('#lem-intervalo', caixa).value) || 120;
+      const ini = Math.min(23, Math.max(0, Number($('#lem-inicio', caixa).value) || 8));
+      const fim = Math.min(24, Math.max(ini + 1, Number($('#lem-fim', caixa).value) || 22));
+      await sb.salvarInscricao({
+        endpoint: sub.endpoint,
+        subscription: sub.toJSON(),
+        ativo: true,
+        intervalo_min: intervalo,
+        hora_inicio: ini,
+        hora_fim: fim,
+      });
+      toast('Lembretes ativados! 💧');
+      fecharModal();
+    } catch (e) {
+      toast(e.message, 'erro');
+      bAtivar.disabled = false; bAtivar.textContent = 'Ativar lembretes';
+    }
+  };
+
+  bDesativar.onclick = async () => {
+    try {
+      const sub = await inscricaoAtual();
+      if (sub) {
+        const linhas = await sb.listar('sau_push', `select=id&endpoint=eq.${encodeURIComponent(sub.endpoint)}`);
+        for (const l of linhas || []) await sb.apagar('sau_push', l.id);
+        await sub.unsubscribe().catch(() => {});
+      }
+      toast('Lembretes desativados.');
+      fecharModal();
+    } catch (e) { toast(e.message, 'erro'); }
+  };
+
+  bTestar.onclick = async () => {
+    bTestar.disabled = true;
+    try {
+      await sb.push({ acao: 'testar' });
+      toast('Teste enviado — a notificação deve chegar em instantes.');
+    } catch (e) { toast(e.message, 'erro'); }
+    bTestar.disabled = false;
+  };
 }
 
 const itemRefeicao = (r) => `
@@ -368,9 +631,14 @@ function modalRefeicao({ comFoto = false, existente = null } = {}) {
 
       <div id="itens-area"></div>
 
-      <label>Calorias (kcal) — pode editar manualmente
-        <input name="calorias" inputmode="decimal" required value="${r ? Math.round(r.calorias) : ''}" placeholder="ex.: 650">
-      </label>
+      <div class="linha2">
+        <label>Calorias (kcal) — editável
+          <input name="calorias" inputmode="decimal" required value="${r ? Math.round(r.calorias) : ''}" placeholder="ex.: 650">
+        </label>
+        <label>Proteínas (g) — opcional
+          <input name="proteinas" inputmode="decimal" value="${r?.proteinas_g != null ? Math.round(r.proteinas_g) : ''}" placeholder="ex.: 40">
+        </label>
+      </div>
 
       <footer class="modal__pe">
         ${r ? '<button type="button" class="btn btn--perigo" id="b-apagar">Apagar</button>' : ''}
@@ -447,6 +715,8 @@ function modalRefeicao({ comFoto = false, existente = null } = {}) {
       itens = res.itens || [];
       origem = 'foto';
       f.calorias.value = Math.round(res.total_calorias || itens.reduce((s, x) => s + (Number(x.calorias) || 0), 0));
+      const prot = itens.reduce((s, x) => s + (Number(x.proteinas_g) || 0), 0);
+      if (prot > 0) f.proteinas.value = Math.round(prot);
       if (!f.descricao.value.trim() && itens.length) f.descricao.value = itens.map((i) => i.nome).slice(0, 4).join(', ');
       desenharItens();
       if (res.observacao) toast(res.observacao, res.itens?.length ? 'info' : 'erro');
@@ -478,6 +748,7 @@ function modalRefeicao({ comFoto = false, existente = null } = {}) {
       quando: new Date(f.quando.value).toISOString(),
       descricao: f.descricao.value.trim(),
       calorias: cal,
+      proteinas_g: num(f.proteinas.value),
       origem: itens.length ? (iaTotal !== Math.round(cal) ? 'foto_editada' : origem) : 'manual',
       itens: itens.length ? itens : null,
       foto: fotoMini,
@@ -956,6 +1227,8 @@ function telaSaude(v) {
       ${cartaoInd('Meta diária', meta ? `${meta} kcal` : '—', st.perfil?.meta_calorias ? 'definida por você' : 'estimada (TMB)', '')}
       ${cartaoInd('Média 7 dias', media7 ? `${Math.round(media7)} kcal` : '—', meta && media7 ? (media7 <= meta ? 'dentro da meta' : 'acima da meta') : 'registre refeições', meta && media7 ? (media7 <= meta ? 'bom' : 'atencao') : '')}
       ${cartaoInd('Atividade/semana', `${minSem} min`, minSem >= 150 ? 'meta OMS atingida' : 'meta OMS: 150 min', minSem >= 150 ? 'bom' : 'atencao')}
+      ${cartaoInd('Água hoje', `${aguaHoje()} ml`, `meta: ${metaAgua()} ml`, aguaHoje() >= metaAgua() ? 'bom' : 'atencao')}
+      ${metaProteina() ? cartaoInd('Proteína hoje', `${Math.round(proteinaDo(hojeISO()))} g`, `meta: ${metaProteina()} g/dia`, proteinaDo(hojeISO()) >= metaProteina() * 0.8 ? 'bom' : 'atencao') : ''}
       ${pa ? cartaoInd('Pressão', `${pa.pressao_sist}/${pa.pressao_diast}`, fmtData(pa.data), Number(pa.pressao_sist) >= 140 || Number(pa.pressao_diast) >= 90 ? 'ruim' : Number(pa.pressao_sist) >= 130 ? 'atencao' : 'bom') : ''}
     </section>
 
@@ -1047,6 +1320,17 @@ function dadosParaIA() {
     atividade_fisica: {
       minutos_ultima_semana: minutosAtividadeSemana(),
       ultimas: st.atividades.slice(0, 15).map((a) => ({ data: a.data, tipo: a.tipo, min: a.duracao_min, kcal: a.calorias })),
+    },
+    hidratacao: {
+      hoje_ml: aguaHoje(),
+      meta_ml_dia: metaAgua(),
+      media_7d_ml: mediaAgua(7) ? Math.round(mediaAgua(7)) : null,
+      temperatura_maxima_hoje: st.clima?.tmax ?? null,
+    },
+    proteina: {
+      hoje_g: Math.round(proteinaDo(hojeISO())),
+      meta_g_dia: metaProteina(),
+      media_7d_g: mediaProteina(7) ? Math.round(mediaProteina(7)) : null,
     },
   };
 }
