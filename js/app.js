@@ -1516,7 +1516,7 @@ function modalGuiaWatch() {
       <p>Os treinos do Watch ficam no app <b>Saúde</b> do iPhone. O app <b>Atalhos</b> (já vem no iPhone) lê esses treinos e envia para cá. Configure uma vez (~5 min):</p>
       <h3>1. Criar o atalho</h3>
       <ul>
-        <li>Abra o app <b>Atalhos</b> → aba <b>Atalhos</b> → toque em <b>+</b> (canto superior direito)</li>
+        <li>Abra o app <b>Atalhos</b> → aba <b>Biblioteca</b> (chamada "Atalhos" em versões mais antigas) → toque em <b>+</b> no canto superior direito. Se não aparecer, role a lista até o topo.</li>
         <li>Toque em <b>Adicionar ação</b>, busque por <b>"Buscar amostras de saúde"</b> e escolha essa ação</li>
         <li>Nela: <b>Tipo</b> → <b>Treinos</b>. Toque em <b>Adicionar filtro</b> → <b>Data de início</b> → <b>é hoje</b></li>
         <li>Adicione a ação <b>"Repetir com cada item"</b> — ela já usa o resultado da anterior</li>

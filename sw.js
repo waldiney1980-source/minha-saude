@@ -1,6 +1,6 @@
 // Minha Saúde — service worker: casca do app em cache, dados sempre da rede.
 
-const CACHE = 'minha-saude-v6';
+const CACHE = 'minha-saude-v7';
 const CASCA = [
   './',
   './index.html',
