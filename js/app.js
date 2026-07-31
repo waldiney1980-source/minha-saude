@@ -217,8 +217,15 @@ const pesoAtual = () => {
 };
 const pressaoAtual = () => st.medidas.find((x) => x.pressao_sist != null) || null;
 
+/** Altura em cm; aceita valor gravado em metros (ex.: 1,65 → 165). */
+const alturaCm = () => {
+  const a = num(st.perfil?.altura_cm);
+  if (!a) return null;
+  return a < 3 ? a * 100 : a;
+};
+
 const imc = () => {
-  const p = pesoAtual(), a = num(st.perfil?.altura_cm);
+  const p = pesoAtual(), a = alturaCm();
   if (!p || !a) return null;
   return p / ((a / 100) ** 2);
 };
@@ -231,7 +238,7 @@ const classeIMC = (v) =>
 
 /** Taxa metabólica basal (Mifflin-St Jeor). */
 function tmb() {
-  const p = pesoAtual(), a = num(st.perfil?.altura_cm), i = idade(), s = st.perfil?.sexo;
+  const p = pesoAtual(), a = alturaCm(), i = idade(), s = st.perfil?.sexo;
   if (!p || !a || i == null || !s) return null;
   return 10 * p + 6.25 * a - 5 * i + (s === 'M' ? 5 : -161);
 }
@@ -1356,7 +1363,7 @@ function telaPerfil(v) {
           </label>
         </div>
         <div class="linha2">
-          <label>Altura (cm) <input name="altura" inputmode="decimal" value="${p.altura_cm || ''}"></label>
+          <label>Altura (cm) <input name="altura" inputmode="decimal" value="${p.altura_cm || ''}" placeholder="ex.: 165"></label>
           <label>Nível de atividade
             <select name="nivel">
               ${['sedentario', 'leve', 'moderado', 'intenso'].map((n) => `<option value="${n}" ${p.nivel_atividade === n ? 'selected' : ''}>${{ sedentario: 'Sedentário', leve: 'Leve', moderado: 'Moderado', intenso: 'Intenso' }[n]}</option>`).join('')}
@@ -1410,7 +1417,7 @@ function telaPerfil(v) {
         nome: f.nome.value.trim(),
         nascimento: f.nascimento.value || null,
         sexo: f.sexo.value,
-        altura_cm: num(f.altura.value),
+        altura_cm: (() => { const a = num(f.altura.value); return a && a < 3 ? a * 100 : a; })(),
         nivel_atividade: f.nivel.value,
         objetivo: f.objetivo.value,
         meta_calorias: num(f.meta.value) ? Math.round(num(f.meta.value)) : null,
