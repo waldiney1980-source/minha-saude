@@ -53,9 +53,20 @@ function paraMinutos(v: unknown): number {
   return Math.round(n);
 }
 
+/** Número a partir de "512", "512 kcal", "1.234 cal", "76,4 kg". */
 function paraNumero(v: unknown): number | null {
   if (v == null) return null;
-  const n = parseFloat(String(v).replace(/\./g, (m, i, s0) => (String(s0).includes(",") ? "" : m)).replace(",", "."));
+  let s = String(v).replace(/[^\d.,-]/g, "").trim();
+  if (!s) return null;
+  const virgula = s.lastIndexOf(","), ponto = s.lastIndexOf(".");
+  if (virgula > -1 && ponto > -1) {
+    s = virgula > ponto ? s.replace(/\./g, "").replace(",", ".") : s.replace(/,/g, "");
+  } else if (virgula > -1) {
+    s = s.length - virgula - 1 <= 2 ? s.replace(",", ".") : s.replace(/,/g, "");
+  } else if (ponto > -1 && s.length - ponto - 1 === 3) {
+    s = s.replace(/\./g, ""); // separador de milhar
+  }
+  const n = parseFloat(s);
   return Number.isFinite(n) ? n : null;
 }
 
@@ -85,6 +96,42 @@ Deno.serve(async (req) => {
   const perfis = await rest(`sau_perfil?select=user_id&atalho_token=eq.${encodeURIComponent(token)}`);
   if (!perfis?.length) return json({ error: "Código de conexão não reconhecido." }, 401);
   const userId = perfis[0].user_id;
+
+  /* -------- resumo diário dos anéis do Watch ("Obter Atividade Física") --------
+     Uma linha por dia, atualizada a cada envio (os anéis crescem ao longo do dia). */
+  if (body.resumo_diario || body.exercicio_min !== undefined) {
+    const data = paraData(body.data);
+    const minutos = paraMinutos(body.exercicio_min);
+    const cal = paraNumero(body.calorias);
+    if (!minutos && !cal) {
+      return json({ ok: true, atualizado: false, aviso: "Nada a registrar (exercício e calorias vazios)." });
+    }
+    const uid = `resumo|${data}`;
+    const linha = {
+      user_id: userId,
+      tipo: "Atividade do dia",
+      data,
+      duracao_min: minutos,
+      calorias: cal,
+      obs: "Apple Watch",
+      uid,
+    };
+    const existentes = await rest(
+      `sau_atividades?select=id&user_id=eq.${userId}&uid=eq.${encodeURIComponent(uid)}&limit=1`,
+    );
+    if (existentes?.length) {
+      await rest(`sau_atividades?id=eq.${existentes[0].id}`, {
+        method: "PATCH", body: JSON.stringify(linha),
+        headers: { Prefer: "return=minimal" },
+      });
+    } else {
+      await rest("sau_atividades", {
+        method: "POST", body: JSON.stringify(linha),
+        headers: { Prefer: "return=minimal" },
+      });
+    }
+    return json({ ok: true, data, exercicio_min: minutos, calorias: cal, atualizado: true });
+  }
 
   const brutos: any[] = Array.isArray(body.treinos)
     ? body.treinos

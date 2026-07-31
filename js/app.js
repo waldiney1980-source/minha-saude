@@ -1403,7 +1403,7 @@ function telaPerfil(v) {
     <section class="cartao">
       <h2 class="cartao__titulo">Apple Watch (via app Saúde) ⌚</h2>
       ${p.atalho_token ? `
-        <p class="nota">Conexão ativa. Os treinos enviados pelo atalho do iPhone entram sozinhos na aba Hoje/Evolução, marcados como "Apple Watch".</p>
+        <p class="nota">Conexão ativa. O que o atalho do iPhone envia entra sozinho nas abas Hoje e Evolução, marcado como "Apple Watch".</p>
         <p class="nota">Código de conexão: <code class="codigo">${esc(p.atalho_token)}</code></p>
         <div class="acoes" style="margin-top:8px">
           <button class="btn btn--mini" id="b-guia-watch">📖 Passo a passo do atalho</button>
@@ -1411,7 +1411,7 @@ function telaPerfil(v) {
           <button class="btn btn--mini btn--perigo" id="b-remover-token">Desconectar</button>
         </div>`
       : `
-        <p class="nota">Sincronize os treinos do seu Apple Watch: o app Atalhos do iPhone lê o app Saúde e envia para cá automaticamente (ex.: toda noite).</p>
+        <p class="nota">Traga a atividade do seu Apple Watch (minutos de exercício e calorias): o app Atalhos do iPhone lê os anéis e envia para cá automaticamente.</p>
         <button class="btn btn--primario" id="b-gerar-token">Conectar Apple Watch</button>`}
     </section>
 
@@ -1513,42 +1513,36 @@ function modalGuiaWatch() {
     <header class="modal__cab"><h2>Conectar o Apple Watch</h2>
       <button class="icone" data-fechar>✕</button></header>
     <div class="prosa" style="font-size:13.5px">
-      <p>Os treinos do Watch ficam no app <b>Saúde</b> do iPhone. O app <b>Atalhos</b> (já vem no iPhone) lê esses treinos e envia para cá. Configure uma vez (~5 min):</p>
+      <p>O app <b>Atalhos</b> (já vem no iPhone) lê os anéis de atividade do Watch — <b>minutos de exercício</b> e <b>calorias em movimento</b> — e envia para cá. São só <b>2 ações</b>:</p>
       <h3>1. Criar o atalho</h3>
       <ul>
-        <li>Abra o app <b>Atalhos</b> → aba <b>Biblioteca</b> (chamada "Atalhos" em versões mais antigas) → toque em <b>+</b> no canto superior direito. Se não aparecer, role a lista até o topo.</li>
-        <li>Toque em <b>Buscar Ações</b> (barra inferior), digite <b>treinos</b> e escolha <b>"Buscar Treinos"</b> — é a ação específica de treinos; "Buscar Amostras de Saúde" serve para passos/peso/batimentos e <i>não</i> funciona aqui</li>
-        <li>Nela, toque em <b>Adicionar Filtro</b> → <b>Data de Início</b> → deixe <b>é hoje</b></li>
-        <li>Adicione a ação <b>"Repetir com Cada Item"</b> (busque por "repetir"; não confunda com "Repetir", que repete N vezes). Ela cria um bloco com <i>Fim de Repetição</i> embaixo</li>
-        <li>Adicione <b>"Obter conteúdo de URL"</b>. Ela entra no fim da lista, <b>abaixo</b> do "Fim de Repetição" — toque e segure nela até ela "levantar" e <b>arraste para cima</b>, soltando entre o "Repetir com Cada Item" e o "Fim de Repetição" (ela fica recuada para a direita, indicando que está dentro do bloco). Configure assim:
-          <br>• <b>URL</b>: <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code>
-          <br>• Toque na seta <b>"Mostrar mais"</b>
-          <br>• <b>Método</b>: <b>POST</b>
-          <br>• <b>Corpo da solicitação</b>: <b>JSON</b>
-          <br>• Toque em <b>"Adicionar novo campo"</b> → <b>Texto</b>, e crie os 5 campos abaixo</li>
+        <li>Abra o app <b>Atalhos</b> → aba <b>Biblioteca</b> → toque em <b>+</b> no canto superior direito (role até o topo se não aparecer)</li>
+        <li>Toque na barra <b>Buscar Ações</b>, digite <b>atividade</b> e escolha <b>"Obter Atividade Física"</b> (ícone laranja). Se ela tiver campo de data, deixe em <b>Hoje</b></li>
+        <li>Busque agora por <b>URL</b> e escolha <b>"Obter Conteúdo de URL"</b>. Ela entra logo abaixo — não precisa arrastar nada</li>
       </ul>
-      <p><b>Os 5 campos do JSON</b> (chave à esquerda, valor à direita):</p>
+      <h3>2. Configurar o envio</h3>
       <ul>
-        <li><b>token</b> → cole: <code class="codigo">${esc(token)}</code></li>
-        <li><b>tipo</b> → toque no valor, escolha a variável <i>Item de Repetição</i> e mude a propriedade para <i>Tipo de atividade</i></li>
-        <li><b>duracao_min</b> → <i>Item de Repetição</i> → propriedade <i>Duração</i></li>
-        <li><b>calorias</b> → <i>Item de Repetição</i> → propriedade <i>Calorias ativas</i></li>
-        <li><b>inicio</b> → <i>Item de Repetição</i> → propriedade <i>Data de início</i></li>
+        <li>No campo de endereço da ação, cole:<br><code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code></li>
+        <li>Toque em <b>Mostrar Mais</b> → <b>Método</b>: <b>POST</b> → <b>Corpo da Solicitação</b>: <b>JSON</b></li>
+        <li>Toque em <b>Adicionar novo campo</b> → tipo <b>Texto</b>, e crie os <b>3 campos</b> abaixo</li>
       </ul>
-      <p class="nota">Para trocar a propriedade da variável: toque nela dentro do campo e escolha na lista que aparece.</p>
+      <p><b>Campo 1 — token</b><br>Chave: <b>token</b> · Valor: <code class="codigo">${esc(token)}</code></p>
+      <p><b>Campo 2 — exercicio_min</b><br>Chave: <b>exercicio_min</b> · Valor: toque no campo, escolha a variável <b>Atividade Física</b> e depois toque nela para trocar a propriedade para <b>Exercício</b> (os minutos)</p>
+      <p><b>Campo 3 — calorias</b><br>Chave: <b>calorias</b> · Valor: mesma variável <b>Atividade Física</b>, com a propriedade <b>Movimento</b> (as calorias ativas)</p>
+      <p class="nota">Os nomes das propriedades podem variar um pouco conforme a versão do iOS. O importante: uma delas são os <b>minutos de exercício</b> e a outra são as <b>calorias/energia ativa</b>.</p>
       <ul>
         <li>Renomeie o atalho para <b>Sincronizar Watch</b> e salve</li>
       </ul>
-      <h3>2. Testar</h3>
+      <h3>3. Testar</h3>
       <ul>
         <li>Rode o atalho pelo botão ▶︎. Na primeira vez o iPhone pede acesso aos dados de Saúde — toque em <b>Permitir</b></li>
-        <li>Volte aqui, puxe para atualizar e veja os treinos na aba <b>Hoje</b></li>
+        <li>Volte aqui, toque no botão de recarregar (canto superior direito) e veja <b>"Atividade do dia"</b> na aba Hoje</li>
       </ul>
-      <h3>3. Automatizar</h3>
+      <h3>4. Automatizar</h3>
       <ul>
-        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do dia</b> (ex.: 21h30, Diariamente) → <b>Executar imediatamente</b> → escolha <b>Sincronizar Watch</b></li>
+        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do Dia</b> (ex.: 21h30, Diariamente) → <b>Executar Imediatamente</b> → escolha <b>Sincronizar Watch</b></li>
       </ul>
-      <p class="nota">Pode rodar quantas vezes quiser: treinos já enviados não duplicam.</p>
+      <p class="nota">Pode rodar quantas vezes quiser por dia: o registro do dia é atualizado, nunca duplicado.</p>
     </div>
     <footer class="modal__pe"><span class="espaco"></span>
       <button class="btn btn--primario" data-fechar>Entendi</button></footer>
