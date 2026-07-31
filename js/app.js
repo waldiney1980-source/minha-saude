@@ -1401,6 +1401,21 @@ function telaPerfil(v) {
     </section>
 
     <section class="cartao">
+      <h2 class="cartao__titulo">Apple Watch (via app Saúde) ⌚</h2>
+      ${p.atalho_token ? `
+        <p class="nota">Conexão ativa. Os treinos enviados pelo atalho do iPhone entram sozinhos na aba Hoje/Evolução, marcados como "Apple Watch".</p>
+        <p class="nota">Código de conexão: <code class="codigo">${esc(p.atalho_token)}</code></p>
+        <div class="acoes" style="margin-top:8px">
+          <button class="btn btn--mini" id="b-guia-watch">📖 Passo a passo do atalho</button>
+          <button class="btn btn--mini btn--fantasma" id="b-copiar-token">Copiar código</button>
+          <button class="btn btn--mini btn--perigo" id="b-remover-token">Desconectar</button>
+        </div>`
+      : `
+        <p class="nota">Sincronize os treinos do seu Apple Watch: o app Atalhos do iPhone lê o app Saúde e envia para cá automaticamente (ex.: toda noite).</p>
+        <button class="btn btn--primario" id="b-gerar-token">Conectar Apple Watch</button>`}
+    </section>
+
+    <section class="cartao">
       <h2 class="cartao__titulo">Conta</h2>
       <p class="nota">Conectado como <b>${esc(u?.email || '')}</b></p>
       <button class="btn btn--perigo" id="b-sair">Sair da conta</button>
@@ -1457,11 +1472,74 @@ function telaPerfil(v) {
     } catch (er) { toast(er.message, 'erro'); }
   });
 
+  const bGerar = $('#b-gerar-token', v);
+  if (bGerar) bGerar.onclick = async () => {
+    bGerar.disabled = true;
+    try {
+      const token = (crypto.randomUUID() + crypto.randomUUID()).replace(/-/g, '').slice(0, 40);
+      st.perfil = await sb.salvarPerfil({ user_id: u.id, atalho_token: token });
+      render();
+      modalGuiaWatch();
+    } catch (er) { toast(er.message, 'erro'); bGerar.disabled = false; }
+  };
+  const bGuia = $('#b-guia-watch', v);
+  if (bGuia) bGuia.onclick = () => modalGuiaWatch();
+  const bCopiar = $('#b-copiar-token', v);
+  if (bCopiar) bCopiar.onclick = async () => {
+    try { await navigator.clipboard.writeText(st.perfil.atalho_token); toast('Código copiado.'); }
+    catch { toast('Não consegui copiar — anote o código exibido.', 'erro'); }
+  };
+  const bRemover = $('#b-remover-token', v);
+  if (bRemover) bRemover.onclick = async () => {
+    if (!confirm('Desconectar o Apple Watch? O atalho do iPhone deixa de funcionar.')) return;
+    try {
+      st.perfil = await sb.salvarPerfil({ user_id: u.id, atalho_token: null });
+      render();
+      toast('Desconectado.');
+    } catch (er) { toast(er.message, 'erro'); }
+  };
+
   $('#b-sair', v).onclick = async () => {
     if (!confirm('Sair da conta?')) return;
     await sb.sair();
     location.reload();
   };
+}
+
+/** Guia do atalho do iPhone que envia os treinos do Watch. */
+function modalGuiaWatch() {
+  const token = st.perfil?.atalho_token || '';
+  modal(`
+    <header class="modal__cab"><h2>Conectar o Apple Watch</h2>
+      <button class="icone" data-fechar>✕</button></header>
+    <div class="prosa" style="font-size:13.5px">
+      <p>Os treinos do Watch ficam no app <b>Saúde</b> do iPhone. O app <b>Atalhos</b> (já vem no iPhone) lê esses treinos e envia para cá. Configure uma vez (~5 min):</p>
+      <h3>1. Criar o atalho</h3>
+      <ul>
+        <li>Abra o app <b>Atalhos</b> → aba Atalhos → <b>+</b></li>
+        <li>Adicione a ação <b>"Buscar amostras de saúde"</b> — em Tipo escolha <b>Treinos</b>; toque em "Adicionar filtro" → <b>Data de início</b> → <b>é hoje</b></li>
+        <li>Adicione a ação <b>"Repetir com cada item"</b> (usa o resultado da anterior)</li>
+        <li><b>Dentro do Repetir</b>, adicione a ação <b>"Dicionário"</b> com estes campos (Texto):
+          <br>• <b>token</b> → <code class="codigo">${esc(token)}</code>
+          <br>• <b>tipo</b> → variável <i>Item de Repetição</i> → propriedade <i>Tipo de atividade</i>
+          <br>• <b>duracao_min</b> → <i>Item de Repetição</i> → <i>Duração</i>
+          <br>• <b>calorias</b> → <i>Item de Repetição</i> → <i>Calorias ativas</i>
+          <br>• <b>inicio</b> → <i>Item de Repetição</i> → <i>Data de início</i></li>
+        <li>Ainda dentro do Repetir, adicione <b>"Obter conteúdo de URL"</b>:
+          <br>• URL: <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code>
+          <br>• Toque em "Mostrar mais" → Método: <b>POST</b> → Corpo da solicitação: <b>JSON</b> → adicione um campo tipo <b>Dicionário</b> apontando para o Dicionário criado acima <i>(ou troque o corpo para "Arquivo" e selecione o Dicionário)</i></li>
+        <li>Nomeie o atalho: <b>Sincronizar Watch</b></li>
+      </ul>
+      <h3>2. Automatizar</h3>
+      <ul>
+        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do dia</b> (ex.: 21h30, Diariamente) → <b>Executar imediatamente</b> → escolha o atalho <b>Sincronizar Watch</b></li>
+      </ul>
+      <p>Pronto: os treinos do dia entram sozinhos (sem duplicar — pode rodar quantas vezes quiser). Na primeira execução o iPhone pede acesso aos dados de Saúde: toque em <b>Permitir</b>.</p>
+      <p class="nota">Dica: rode o atalho manualmente uma vez para testar — a resposta mostra quantos treinos entraram.</p>
+    </div>
+    <footer class="modal__pe"><span class="espaco"></span>
+      <button class="btn btn--primario" data-fechar>Entendi</button></footer>
+  `, { aoAbrir: (caixa) => $$('[data-fechar]', caixa).forEach((b) => b.onclick = fecharModal) });
 }
 
 /* ============ navegação e arranque ============ */
