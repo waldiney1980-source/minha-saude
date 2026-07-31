@@ -1517,8 +1517,8 @@ function modalGuiaWatch() {
       <h3>1. Criar o atalho</h3>
       <ul>
         <li>Abra o app <b>Atalhos</b> → aba <b>Biblioteca</b> (chamada "Atalhos" em versões mais antigas) → toque em <b>+</b> no canto superior direito. Se não aparecer, role a lista até o topo.</li>
-        <li>Toque em <b>Adicionar ação</b>, busque por <b>"Buscar amostras de saúde"</b> e escolha essa ação</li>
-        <li>Nela: <b>Tipo</b> → <b>Treinos</b>. Toque em <b>Adicionar filtro</b> → <b>Data de início</b> → <b>é hoje</b></li>
+        <li>Toque em <b>Buscar Ações</b> (barra inferior), digite <b>treinos</b> e escolha <b>"Buscar Treinos"</b> — é a ação específica de treinos; "Buscar Amostras de Saúde" serve para passos/peso/batimentos e <i>não</i> funciona aqui</li>
+        <li>Nela, toque em <b>Adicionar Filtro</b> → <b>Data de Início</b> → deixe <b>é hoje</b></li>
         <li>Adicione a ação <b>"Repetir com Cada Item"</b> (busque por "repetir"; não confunda com "Repetir", que repete N vezes). Ela cria um bloco com <i>Fim de Repetição</i> embaixo</li>
         <li>Adicione <b>"Obter conteúdo de URL"</b>. Ela entra no fim da lista, <b>abaixo</b> do "Fim de Repetição" — toque e segure nela até ela "levantar" e <b>arraste para cima</b>, soltando entre o "Repetir com Cada Item" e o "Fim de Repetição" (ela fica recuada para a direita, indicando que está dentro do bloco). Configure assim:
           <br>• <b>URL</b>: <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code>
