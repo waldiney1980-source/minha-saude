@@ -1516,26 +1516,39 @@ function modalGuiaWatch() {
       <p>Os treinos do Watch ficam no app <b>Saúde</b> do iPhone. O app <b>Atalhos</b> (já vem no iPhone) lê esses treinos e envia para cá. Configure uma vez (~5 min):</p>
       <h3>1. Criar o atalho</h3>
       <ul>
-        <li>Abra o app <b>Atalhos</b> → aba Atalhos → <b>+</b></li>
-        <li>Adicione a ação <b>"Buscar amostras de saúde"</b> — em Tipo escolha <b>Treinos</b>; toque em "Adicionar filtro" → <b>Data de início</b> → <b>é hoje</b></li>
-        <li>Adicione a ação <b>"Repetir com cada item"</b> (usa o resultado da anterior)</li>
-        <li><b>Dentro do Repetir</b>, adicione a ação <b>"Dicionário"</b> com estes campos (Texto):
-          <br>• <b>token</b> → <code class="codigo">${esc(token)}</code>
-          <br>• <b>tipo</b> → variável <i>Item de Repetição</i> → propriedade <i>Tipo de atividade</i>
-          <br>• <b>duracao_min</b> → <i>Item de Repetição</i> → <i>Duração</i>
-          <br>• <b>calorias</b> → <i>Item de Repetição</i> → <i>Calorias ativas</i>
-          <br>• <b>inicio</b> → <i>Item de Repetição</i> → <i>Data de início</i></li>
-        <li>Ainda dentro do Repetir, adicione <b>"Obter conteúdo de URL"</b>:
-          <br>• URL: <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code>
-          <br>• Toque em "Mostrar mais" → Método: <b>POST</b> → Corpo da solicitação: <b>JSON</b> → adicione um campo tipo <b>Dicionário</b> apontando para o Dicionário criado acima <i>(ou troque o corpo para "Arquivo" e selecione o Dicionário)</i></li>
-        <li>Nomeie o atalho: <b>Sincronizar Watch</b></li>
+        <li>Abra o app <b>Atalhos</b> → aba <b>Atalhos</b> → toque em <b>+</b> (canto superior direito)</li>
+        <li>Toque em <b>Adicionar ação</b>, busque por <b>"Buscar amostras de saúde"</b> e escolha essa ação</li>
+        <li>Nela: <b>Tipo</b> → <b>Treinos</b>. Toque em <b>Adicionar filtro</b> → <b>Data de início</b> → <b>é hoje</b></li>
+        <li>Adicione a ação <b>"Repetir com cada item"</b> — ela já usa o resultado da anterior</li>
+        <li><b>Dentro do bloco Repetir</b>, adicione <b>"Obter conteúdo de URL"</b> e configure:
+          <br>• <b>URL</b>: <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code>
+          <br>• Toque na seta <b>"Mostrar mais"</b>
+          <br>• <b>Método</b>: <b>POST</b>
+          <br>• <b>Corpo da solicitação</b>: <b>JSON</b>
+          <br>• Toque em <b>"Adicionar novo campo"</b> → <b>Texto</b>, e crie os 5 campos abaixo</li>
       </ul>
-      <h3>2. Automatizar</h3>
+      <p><b>Os 5 campos do JSON</b> (chave à esquerda, valor à direita):</p>
       <ul>
-        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do dia</b> (ex.: 21h30, Diariamente) → <b>Executar imediatamente</b> → escolha o atalho <b>Sincronizar Watch</b></li>
+        <li><b>token</b> → cole: <code class="codigo">${esc(token)}</code></li>
+        <li><b>tipo</b> → toque no valor, escolha a variável <i>Item de Repetição</i> e mude a propriedade para <i>Tipo de atividade</i></li>
+        <li><b>duracao_min</b> → <i>Item de Repetição</i> → propriedade <i>Duração</i></li>
+        <li><b>calorias</b> → <i>Item de Repetição</i> → propriedade <i>Calorias ativas</i></li>
+        <li><b>inicio</b> → <i>Item de Repetição</i> → propriedade <i>Data de início</i></li>
       </ul>
-      <p>Pronto: os treinos do dia entram sozinhos (sem duplicar — pode rodar quantas vezes quiser). Na primeira execução o iPhone pede acesso aos dados de Saúde: toque em <b>Permitir</b>.</p>
-      <p class="nota">Dica: rode o atalho manualmente uma vez para testar — a resposta mostra quantos treinos entraram.</p>
+      <p class="nota">Para trocar a propriedade da variável: toque nela dentro do campo e escolha na lista que aparece.</p>
+      <ul>
+        <li>Renomeie o atalho para <b>Sincronizar Watch</b> e salve</li>
+      </ul>
+      <h3>2. Testar</h3>
+      <ul>
+        <li>Rode o atalho pelo botão ▶︎. Na primeira vez o iPhone pede acesso aos dados de Saúde — toque em <b>Permitir</b></li>
+        <li>Volte aqui, puxe para atualizar e veja os treinos na aba <b>Hoje</b></li>
+      </ul>
+      <h3>3. Automatizar</h3>
+      <ul>
+        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do dia</b> (ex.: 21h30, Diariamente) → <b>Executar imediatamente</b> → escolha <b>Sincronizar Watch</b></li>
+      </ul>
+      <p class="nota">Pode rodar quantas vezes quiser: treinos já enviados não duplicam.</p>
     </div>
     <footer class="modal__pe"><span class="espaco"></span>
       <button class="btn btn--primario" data-fechar>Entendi</button></footer>
