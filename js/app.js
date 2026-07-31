@@ -1522,7 +1522,8 @@ function modalGuiaWatch() {
       </ul>
       <h3>2. Configurar o envio</h3>
       <ul>
-        <li>No campo de endereço da ação, cole:<br><code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code></li>
+        <li>A ação costuma vir preenchida com a variável <b>Atividade Física</b> (em azul) no lugar do endereço. Toque nela e <b>apague</b> (tecla ⌫ ou o X dela) — só então o campo aceita o endereço</li>
+        <li>Com o campo vazio, cole:<br><code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code></li>
         <li>Toque em <b>Mostrar Mais</b> → <b>Método</b>: <b>POST</b> → <b>Corpo da Solicitação</b>: <b>JSON</b></li>
         <li>Toque em <b>Adicionar novo campo</b> → tipo <b>Texto</b>, e crie os <b>3 campos</b> abaixo</li>
       </ul>
