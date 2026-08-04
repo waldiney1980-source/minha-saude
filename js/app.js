@@ -26,6 +26,36 @@ const fmtData = (iso) => {
 };
 const fmtHora = (ts) => new Date(ts).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 
+/** Soma (ou subtrai) dias a uma data ISO, sem sair do fuso local. */
+const somarDias = (iso, n) => {
+  const d = new Date(iso + 'T12:00');
+  d.setDate(d.getDate() + n);
+  return dataLocal(d);
+};
+/** "Hoje", "Ontem" ou o dia da semana — para o cabeçalho e o histórico. */
+function rotuloDia(iso) {
+  const hoje = hojeISO();
+  if (iso === hoje) return 'Hoje';
+  if (iso === somarDias(hoje, -1)) return 'Ontem';
+  const s = new Date(iso + 'T12:00').toLocaleDateString('pt-BR', { weekday: 'long' });
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+/** Timestamp usado ao registrar em um dia passado: meio-dia daquele dia. */
+const instanteDo = (iso) =>
+  (iso === hojeISO() ? new Date() : new Date(iso + 'T12:00')).toISOString();
+
+/** Dias ISO (do mais antigo ao mais novo) entre duas datas, com teto de segurança. */
+function listaDias(de, ate) {
+  const dias = [];
+  let d = de;
+  for (let i = 0; i < 400 && d <= ate; i++) { dias.push(d); d = somarDias(d, 1); }
+  return dias;
+}
+const noIntervalo = (iso, de, ate) => iso >= de && iso <= ate;
+const primeiroDiaDoMes = () => hojeISO().slice(0, 8) + '01';
+/** "03/08" — rótulo curto para eixos de gráfico. */
+const diaCurto = (iso) => `${iso.slice(8)}/${iso.slice(5, 7)}`;
+
 function toast(msg, tipo = 'info') {
   const box = $('#toasts');
   const t = document.createElement('div');
@@ -89,8 +119,19 @@ function comprimir(arquivo, lado, qualidade) {
 
 /* ============ estado ============ */
 
+/** Filtros da aba Evolução, lembrados entre sessões. */
+const FILTRO_PADRAO = { preset: '30', de: '', ate: '', tipoRef: 'todos', tipoAtv: 'todos' };
+function carregarFiltro() {
+  try { return { ...FILTRO_PADRAO, ...JSON.parse(localStorage.getItem('saude.filtro') || '{}') }; }
+  catch { return { ...FILTRO_PADRAO }; }
+}
+const salvarFiltro = () => localStorage.setItem('saude.filtro', JSON.stringify(st.filtro));
+
 const st = {
   aba: 'hoje',
+  dia: hojeISO(),      // dia exibido na aba Hoje (permite voltar no histórico)
+  histDias: 10,        // quantos dias o cartão "Dias anteriores" mostra
+  filtro: carregarFiltro(),
   perfil: null,
   medidas: [],
   exames: [],
@@ -100,6 +141,8 @@ const st = {
   clima: null,
   avaliacaoIA: localStorage.getItem('saude.avaliacao') || '',
   avaliacaoQuando: localStorage.getItem('saude.avaliacaoQuando') || '',
+  avaliacaoPeriodo: localStorage.getItem('saude.avaliacaoPeriodo') || '',
+  avaliacaoPeriodoQuando: localStorage.getItem('saude.avaliacaoPeriodoQuando') || '',
 };
 
 async function carregarTudo() {
@@ -142,19 +185,20 @@ async function climaHoje() {
 }
 
 const aguaDo = (dia) => st.agua.filter((a) => dataLocal(a.quando) === dia);
-const aguaHoje = () => aguaDo(hojeISO()).reduce((s, a) => s + (Number(a.ml) || 0), 0);
+const somaAgua = (dia) => aguaDo(dia).reduce((s, a) => s + (Number(a.ml) || 0), 0);
+const aguaHoje = () => somaAgua(hojeISO());
 
-/** Meta de água: 35 ml/kg + calor do dia + atividade física de hoje. */
-function metaAgua() {
+/** Meta de água: 35 ml/kg + calor do dia + atividade física daquele dia. */
+function metaAgua(dia = hojeISO()) {
   const p = pesoAtual() || 70;
   let ml = p * 35;
-  const t = st.clima?.tmax;
+  const t = dia === hojeISO() ? st.clima?.tmax : null;  // só sabemos a temperatura de hoje
   if (t != null) {
     if (t >= 32) ml += 700;
     else if (t >= 28) ml += 500;
     else if (t >= 24) ml += 250;
   }
-  const minAtv = atividadesDo(hojeISO()).reduce((s, a) => s + (Number(a.duracao_min) || 0), 0);
+  const minAtv = atividadesDo(dia).reduce((s, a) => s + (Number(a.duracao_min) || 0), 0);
   ml += Math.round((minAtv / 60) * 400);
   return Math.round(ml / 50) * 50;
 }
@@ -279,6 +323,108 @@ function minutosAtividadeSemana() {
     .reduce((s, a) => s + (Number(a.duracao_min) || 0), 0);
 }
 
+/* ============ período com filtros (aba Evolução) ============ */
+
+const PRESETS = [['7', '7 dias'], ['14', '14 dias'], ['30', '30 dias'], ['90', '90 dias'],
+  ['mes', 'Este mês'], ['custom', 'Escolher datas']];
+const TIPOS_REFEICAO = [['todos', 'Todas'], ['cafe', 'Café da manhã'], ['almoco', 'Almoço'],
+  ['jantar', 'Jantar'], ['lanche', 'Lanche']];
+
+/** Intervalo de datas em vigor, já validado (nunca no futuro, nunca invertido). */
+function periodoAtual() {
+  const hoje = hojeISO();
+  const f = st.filtro;
+  let de, ate;
+  if (f.preset === 'custom') {
+    ate = f.ate && f.ate <= hoje ? f.ate : hoje;
+    de = f.de && f.de <= ate ? f.de : somarDias(ate, -29);
+  } else if (f.preset === 'mes') {
+    de = primeiroDiaDoMes(); ate = hoje;
+  } else {
+    const n = Number(f.preset) || 30;
+    ate = hoje; de = somarDias(hoje, -(n - 1));
+  }
+  return { de, ate, dias: listaDias(de, ate) };
+}
+
+function rotuloPeriodo(p) {
+  const f = st.filtro;
+  if (f.preset === 'mes') return 'Este mês';
+  if (f.preset === 'custom') return `${fmtData(p.de)} a ${fmtData(p.ate)}`;
+  return `Últimos ${p.dias.length} dias`;
+}
+const temFiltroDeTipo = () => st.filtro.tipoRef !== 'todos' || st.filtro.tipoAtv !== 'todos';
+
+/** Consolida refeições, atividades, água e peso dia a dia dentro do período. */
+function dadosPeriodo(p) {
+  const f = st.filtro;
+  const dentro = (iso) => noIntervalo(iso, p.de, p.ate);
+  const refs = st.refeicoes.filter((r) => dentro(dataLocal(r.quando)) && (f.tipoRef === 'todos' || r.tipo === f.tipoRef));
+  const ats = st.atividades.filter((a) => dentro(String(a.data).slice(0, 10)) && (f.tipoAtv === 'todos' || a.tipo === f.tipoAtv));
+  const aguas = st.agua.filter((a) => dentro(dataLocal(a.quando)));
+  const medidas = st.medidas.filter((m) => dentro(String(m.data).slice(0, 10)));
+
+  const mapa = new Map(p.dias.map((iso) =>
+    [iso, { iso, kcal: 0, nRef: 0, prot: 0, agua: 0, min: 0, kcalAtv: 0, peso: null }]));
+  for (const r of refs) {
+    const d = mapa.get(dataLocal(r.quando));
+    if (!d) continue;
+    d.kcal += Number(r.calorias) || 0; d.nRef++; d.prot += Number(r.proteinas_g) || 0;
+  }
+  for (const a of ats) {
+    const d = mapa.get(String(a.data).slice(0, 10));
+    if (!d) continue;
+    d.min += Number(a.duracao_min) || 0; d.kcalAtv += Number(a.calorias) || 0;
+  }
+  for (const a of aguas) {
+    const d = mapa.get(dataLocal(a.quando));
+    if (d) d.agua += Number(a.ml) || 0;
+  }
+  // st.medidas vem da mais nova para a mais antiga: invertendo, o último a gravar é o mais recente do dia.
+  for (const m of [...medidas].reverse()) {
+    const d = mapa.get(String(m.data).slice(0, 10));
+    if (d && m.peso_kg != null) d.peso = Number(m.peso_kg);
+  }
+
+  const porDia = p.dias.map((iso) => mapa.get(iso));
+  const comRef = porDia.filter((d) => d.nRef > 0);
+  const comProt = porDia.filter((d) => d.prot > 0);
+  const comAgua = porDia.filter((d) => d.agua > 0);
+  const media = (lista, campo) => (lista.length ? lista.reduce((s, d) => s + d[campo], 0) / lista.length : null);
+  const pesos = porDia.filter((d) => d.peso != null);
+  const meta = metaCalorias();
+
+  return {
+    porDia, refs, ats,
+    diasTotal: porDia.length,
+    diasComRegistro: porDia.filter((d) => d.nRef || d.min || d.agua).length,
+    diasComRef: comRef.length,
+    mediaKcal: media(comRef, 'kcal'),
+    totalKcal: porDia.reduce((s, d) => s + d.kcal, 0),
+    diasNaMeta: meta ? comRef.filter((d) => d.kcal <= meta).length : null,
+    mediaProt: media(comProt, 'prot'),
+    mediaAgua: media(comAgua, 'agua'),
+    totalMin: porDia.reduce((s, d) => s + d.min, 0),
+    kcalAtv: porDia.reduce((s, d) => s + d.kcalAtv, 0),
+    pesoIni: pesos.length ? pesos[0] : null,
+    pesoFim: pesos.length > 1 ? pesos[pesos.length - 1] : null,
+  };
+}
+
+/** Barras do gráfico: um dia cada, ou uma semana cada quando o período é longo. */
+function barrasPeriodo(porDia, campo, { mediaPorDia = false } = {}) {
+  if (porDia.length <= 45) {
+    return porDia.map((d) => ({ x: diaCurto(d.iso), y: Math.round(d[campo]) }));
+  }
+  const barras = [];
+  for (let i = 0; i < porDia.length; i += 7) {
+    const bloco = porDia.slice(i, i + 7);
+    const total = bloco.reduce((s, d) => s + d[campo], 0);
+    barras.push({ x: diaCurto(bloco[0].iso), y: Math.round(mediaPorDia ? total / bloco.length : total) });
+  }
+  return barras;
+}
+
 /* ============ exames: modelos com faixas usuais ============ */
 
 const EXAMES_MODELO = [
@@ -321,27 +467,28 @@ function calAtividade(tipo, minutos) {
 /* ============ telas ============ */
 
 const TITULOS = {
-  hoje: ['Hoje', () => fmtData(hojeISO())],
+  hoje: [() => rotuloDia(st.dia), () => fmtData(st.dia)],
   exames: ['Exames', () => `${st.exames.length} registro(s)`],
-  evolucao: ['Evolução', () => 'peso, calorias e atividade'],
+  evolucao: ['Evolução', () => rotuloPeriodo(periodoAtual())],
   saude: ['Minha saúde', () => 'indicadores e avaliação'],
   perfil: ['Perfil', () => sb.usuario()?.email || ''],
 };
 
 function render() {
   const [titulo, sub] = TITULOS[st.aba];
-  $('#titulo').textContent = titulo;
+  $('#titulo').textContent = typeof titulo === 'function' ? titulo() : titulo;
   $('#subtitulo').textContent = sub();
   $$('.abas button').forEach((b) => b.classList.toggle('ativa', b.dataset.aba === st.aba));
   const v = $('#view');
   v.innerHTML = '';
-  ({ hoje: telaHoje, exames: telaExames, evolucao: telaEvolucao, saude: telaSaude, perfil: telaPerfil })[st.aba](v);
+  ({ hoje: telaDia, exames: telaExames, evolucao: telaEvolucao, saude: telaSaude, perfil: telaPerfil })[st.aba](v);
 }
 
-/* ---------- Hoje ---------- */
+/* ---------- Dia: hoje e o histórico dos dias anteriores ---------- */
 
-function telaHoje(v) {
-  const dia = hojeISO();
+function telaDia(v) {
+  const dia = st.dia;
+  const ehHoje = dia === hojeISO();
   const refs = refeicoesDo(dia).sort((a, b) => new Date(a.quando) - new Date(b.quando));
   const ats = atividadesDo(dia);
   const consumido = somaCal(refs);
@@ -351,16 +498,26 @@ function telaHoje(v) {
   const restante = meta ? Math.round(meta - consumido) : null;
   const protHoje = Math.round(proteinaDo(dia));
   const protMeta = metaProteina();
-  const agua = aguaHoje();
-  const aguaMeta = metaAgua();
+  const agua = somaAgua(dia);
+  const aguaMeta = metaAgua(dia);
   const aguaPct = Math.min(100, Math.round((agua / aguaMeta) * 100));
-  const t = st.clima?.tmax;
+  const t = ehHoje ? st.clima?.tmax : null;
 
-  if (!st.clima) {
+  if (ehHoje && !st.clima) {
     climaHoje().then((c) => { st.clima = c; if (st.aba === 'hoje') render(); }).catch(() => {});
   }
 
   v.innerHTML = `
+    <section class="cartao nav-dia">
+      <button class="nav-dia__seta" id="d-ant" aria-label="Dia anterior">‹</button>
+      <label class="nav-dia__meio">
+        <b>${rotuloDia(dia)}</b>
+        <input type="date" id="d-data" value="${dia}" max="${hojeISO()}" aria-label="Escolher o dia">
+      </label>
+      <button class="nav-dia__seta" id="d-prox" aria-label="Próximo dia" ${ehHoje ? 'disabled' : ''}>›</button>
+      ${ehHoje ? '' : '<button class="btn btn--mini btn--fantasma nav-dia__hoje" id="d-hoje">Voltar para hoje</button>'}
+    </section>
+
     <section class="cartao resumo">
       <div class="resumo__anel" style="--pct:${pct}">
         <div class="resumo__miolo"><b>${Math.round(consumido)}</b><span>kcal</span></div>
@@ -380,7 +537,7 @@ function telaHoje(v) {
       <div class="agua-barra"><div class="agua-barra__cheio" style="width:${aguaPct}%"></div></div>
       <p class="agua-info"><b>${agua} ml</b> de <b>${aguaMeta} ml</b>
         ${t != null ? ` · máx. de <b>${t}°C</b> hoje${t >= 28 ? ' — dia quente, hidrate-se mais!' : ''}` : ''}</p>
-      <p class="nota">Meta calculada pelo seu peso${t != null ? ', pela temperatura do dia' : ''} e pela atividade física de hoje.</p>
+      <p class="nota">Meta calculada pelo seu peso${t != null ? ', pela temperatura do dia' : ''} e pela atividade física ${ehHoje ? 'de hoje' : 'do dia'}.</p>
       <div class="agua-botoes">
         <button class="btn btn--mini" data-agua="200">+ Copo (200)</button>
         <button class="btn btn--mini" data-agua="300">+ Copo (300)</button>
@@ -390,14 +547,14 @@ function telaHoje(v) {
     </section>
 
     <section class="cartao">
-      <header class="cartao__cab"><h2>Refeições de hoje</h2>
+      <header class="cartao__cab"><h2>Refeições ${ehHoje ? 'de hoje' : `de ${fmtData(dia)}`}</h2>
         <div class="acoes">
           <button class="btn btn--mini" id="add-foto">📷 Foto</button>
           <button class="btn btn--mini btn--fantasma" id="add-manual">+ Manual</button>
         </div>
       </header>
       ${refs.length ? `<ul class="lista">${refs.map(itemRefeicao).join('')}</ul>`
-        : '<p class="vazio">Nenhuma refeição registrada hoje. Tire uma foto do prato e deixe a IA estimar as calorias.</p>'}
+        : `<p class="vazio">Nenhuma refeição registrada ${ehHoje ? 'hoje. Tire uma foto do prato e deixe a IA estimar as calorias.' : 'neste dia.'}</p>`}
     </section>
 
     <section class="cartao">
@@ -405,24 +562,35 @@ function telaHoje(v) {
         <button class="btn btn--mini btn--fantasma" id="add-atv">+ Registrar</button>
       </header>
       ${ats.length ? `<ul class="lista">${ats.map(itemAtividade).join('')}</ul>`
-        : '<p class="vazio">Nenhuma atividade hoje.</p>'}
-    </section>`;
+        : `<p class="vazio">Nenhuma atividade ${ehHoje ? 'hoje' : 'neste dia'}.</p>`}
+    </section>
 
-  $('#add-foto', v).onclick = () => modalRefeicao({ comFoto: true });
-  $('#add-manual', v).onclick = () => modalRefeicao({});
-  $('#add-atv', v).onclick = () => modalAtividade();
+    ${cartaoHistorico(dia)}`;
+
+  $('#d-ant', v).onclick = () => irParaDia(somarDias(dia, -1));
+  $('#d-prox', v).onclick = () => { if (!ehHoje) irParaDia(somarDias(dia, 1)); };
+  $('#d-data', v).onchange = (e) => {
+    const escolhido = e.target.value;
+    if (escolhido) irParaDia(escolhido > hojeISO() ? hojeISO() : escolhido);
+  };
+  const bHoje = $('#d-hoje', v);
+  if (bHoje) bHoje.onclick = () => irParaDia(hojeISO());
+
+  $('#add-foto', v).onclick = () => modalRefeicao({ comFoto: true, dia });
+  $('#add-manual', v).onclick = () => modalRefeicao({ dia });
+  $('#add-atv', v).onclick = () => modalAtividade(null, dia);
   $('#b-lembretes', v).onclick = () => modalLembretes();
   $$('[data-agua]', v).forEach((b) => b.onclick = async () => {
     b.disabled = true;
     try {
-      const salvo = await sb.inserir('sau_agua', { ml: Number(b.dataset.agua) });
+      const salvo = await sb.inserir('sau_agua', { ml: Number(b.dataset.agua), quando: instanteDo(dia) });
       st.agua.unshift(salvo);
       render();
     } catch (e) { toast(e.message, 'erro'); b.disabled = false; }
   });
   const desfazer = $('#b-agua-desfazer', v);
   if (desfazer) desfazer.onclick = async () => {
-    const ultimo = aguaDo(hojeISO()).sort((a, b) => new Date(b.quando) - new Date(a.quando))[0];
+    const ultimo = aguaDo(dia).sort((a, b) => new Date(b.quando) - new Date(a.quando))[0];
     if (!ultimo) return;
     try {
       await sb.apagar('sau_agua', ultimo.id);
@@ -430,8 +598,44 @@ function telaHoje(v) {
       render();
     } catch (e) { toast(e.message, 'erro'); }
   };
+  const bMais = $('#hist-mais', v);
+  if (bMais) bMais.onclick = () => { st.histDias += 10; render(); };
+  $$('[data-dia]', v).forEach((li) => li.onclick = () => irParaDia(li.dataset.dia));
   $$('[data-ir]', v).forEach((a) => a.onclick = (e) => { e.preventDefault(); irPara(a.dataset.ir); });
   ligarListas(v);
+}
+
+/** Cartão "Dias anteriores": resumo dos dias que antecedem o dia exibido. */
+function cartaoHistorico(dia) {
+  const linhas = [];
+  for (let i = 1; i <= st.histDias; i++) {
+    const iso = somarDias(dia, -i);
+    const refs = refeicoesDo(iso);
+    const ats = atividadesDo(iso);
+    const ml = somaAgua(iso);
+    const vazio = !refs.length && !ats.length && !ml;
+    const detalhes = vazio ? 'sem registros'
+      : [refs.length ? `${refs.length} refeição(ões)` : '', ml ? `${ml} ml` : '',
+         ats.length ? `${ats.reduce((s, a) => s + (Number(a.duracao_min) || 0), 0)} min` : '']
+        .filter(Boolean).join(' · ');
+    linhas.push(`
+      <li class="item" data-dia="${iso}">
+        <span class="item__icone">${vazio ? '·' : '📅'}</span>
+        <div class="item__meio"><b>${rotuloDia(iso)} · ${fmtData(iso)}</b><small>${detalhes}</small></div>
+        <span class="item__valor">${refs.length ? kcal(somaCal(refs)) : ''}</span>
+      </li>`);
+  }
+  return `
+    <section class="cartao">
+      <header class="cartao__cab"><h2>Dias anteriores</h2>
+        <button class="btn btn--mini btn--fantasma" data-ir="evolucao">Analisar período</button>
+      </header>
+      <ul class="lista">${linhas.join('')}</ul>
+      <div class="agua-botoes">
+        <button class="btn btn--mini btn--fantasma" id="hist-mais">Carregar mais 10 dias</button>
+      </div>
+      <p class="nota">Toque em um dia para abrir e registrar o que faltou.</p>
+    </section>`;
 }
 
 /* ---------- lembretes de água (notificações push) ---------- */
@@ -597,7 +801,7 @@ function ligarListas(v) {
 
 /* ---------- modal de refeição (foto + IA ou manual) ---------- */
 
-function modalRefeicao({ comFoto = false, existente = null } = {}) {
+function modalRefeicao({ comFoto = false, existente = null, dia = hojeISO() } = {}) {
   const r = existente;
   let fotoAnalise = null;           // base64 grande, só para a IA
   let fotoMini = r?.foto || null;   // miniatura persistida
@@ -657,7 +861,7 @@ function modalRefeicao({ comFoto = false, existente = null } = {}) {
 
   const f = $('#f-ref', caixa);
   f.tipo.value = r?.tipo || sugerirTipo();
-  const quandoBase = r ? new Date(r.quando) : new Date();
+  const quandoBase = r ? new Date(r.quando) : new Date(instanteDo(dia));
   f.quando.value = `${dataLocal(quandoBase)}T${String(quandoBase.getHours()).padStart(2, '0')}:${String(quandoBase.getMinutes()).padStart(2, '0')}`;
 
   const desenharItens = () => {
@@ -780,7 +984,7 @@ function sugerirTipo() {
 
 /* ---------- modal de atividade ---------- */
 
-function modalAtividade(a = null) {
+function modalAtividade(a = null, dia = hojeISO()) {
   const caixa = modal(`
     <header class="modal__cab"><h2>${a ? 'Editar atividade' : 'Nova atividade'}</h2>
       <button class="icone" data-fechar>✕</button></header>
@@ -789,7 +993,7 @@ function modalAtividade(a = null) {
         <label>Tipo
           <select name="tipo">${ATIVIDADES_MET.map(([n]) => `<option>${n}</option>`).join('')}</select>
         </label>
-        <label>Data <input type="date" name="data" required value="${a ? String(a.data).slice(0, 10) : hojeISO()}"></label>
+        <label>Data <input type="date" name="data" required value="${a ? String(a.data).slice(0, 10) : dia}" max="${hojeISO()}"></label>
       </div>
       <div class="linha2">
         <label>Duração (min) <input name="duracao" inputmode="numeric" required value="${a?.duracao_min || ''}" placeholder="ex.: 40"></label>
@@ -1106,35 +1310,187 @@ function modalExame(e = null) {
 /* ---------- Evolução (gráficos em canvas) ---------- */
 
 function telaEvolucao(v) {
-  v.innerHTML = `
-    <section class="cartao"><h2 class="cartao__titulo">Peso (kg)</h2><canvas id="g-peso" height="170"></canvas></section>
-    <section class="cartao"><h2 class="cartao__titulo">Calorias por dia — últimos 14 dias</h2><canvas id="g-cal" height="170"></canvas></section>
-    <section class="cartao"><h2 class="cartao__titulo">Atividade física (min/semana)</h2><canvas id="g-atv" height="170"></canvas></section>`;
+  const p = periodoAtual();
+  const d = dadosPeriodo(p);
+  const porSemana = d.porDia.length > 45;
 
-  const pesos = st.medidas.filter((m) => m.peso_kg != null)
-    .map((m) => ({ x: String(m.data).slice(0, 10), y: Number(m.peso_kg) }))
-    .sort((a, b) => a.x.localeCompare(b.x));
+  v.innerHTML = `
+    ${cartaoFiltros(p, d)}
+    ${cartaoResumoPeriodo(p, d)}
+    <section class="cartao">
+      <h2 class="cartao__titulo">Calorias ${porSemana ? '— média por dia em cada semana' : 'por dia'}</h2>
+      <canvas id="g-cal" height="170"></canvas>
+    </section>
+    <section class="cartao"><h2 class="cartao__titulo">Peso (kg)</h2><canvas id="g-peso" height="170"></canvas></section>
+    <section class="cartao">
+      <h2 class="cartao__titulo">Atividade física (${porSemana ? 'min/semana' : 'min/dia'})</h2>
+      <canvas id="g-atv" height="170"></canvas>
+    </section>
+    ${cartaoDiaADia(d)}
+    ${cartaoAvaliacaoPeriodo(p)}`;
+
+  desenharBarras($('#g-cal', v), barrasPeriodo(d.porDia, 'kcal', { mediaPorDia: porSemana }),
+    { linhaMeta: metaCalorias() });
+
+  const pesos = d.porDia.filter((x) => x.peso != null).map((x) => ({ x: x.iso, y: x.peso }));
   desenharLinha($('#g-peso', v), pesos, { unidade: 'kg' });
 
-  const dias = [];
-  for (let i = 13; i >= 0; i--) {
-    const d = new Date(Date.now() - i * 864e5);
-    const iso = dataLocal(d);
-    dias.push({ x: iso.slice(8) + '/' + iso.slice(5, 7), y: somaCal(refeicoesDo(iso)) });
-  }
-  desenharBarras($('#g-cal', v), dias, { linhaMeta: metaCalorias() });
+  desenharBarras($('#g-atv', v), barrasPeriodo(d.porDia, 'min'),
+    { linhaMeta: porSemana ? 150 : 30, corMeta: '#18b06b' });
 
-  const semanas = [];
-  for (let i = 7; i >= 0; i--) {
-    const fim = new Date(Date.now() - i * 7 * 864e5);
-    const ini = new Date(fim.getTime() - 6 * 864e5);
-    const total = st.atividades.filter((a) => {
-      const t = new Date(a.data + 'T12:00').getTime();
-      return t >= ini.getTime() && t <= fim.getTime();
-    }).reduce((s, a) => s + (Number(a.duracao_min) || 0), 0);
-    semanas.push({ x: `${String(ini.getDate()).padStart(2, '0')}/${String(ini.getMonth() + 1).padStart(2, '0')}`, y: total });
+  ligarFiltros(v);
+  $$('[data-dia]', v).forEach((li) => li.onclick = () => irParaDia(li.dataset.dia));
+  $('#b-avaliar-periodo', v).onclick = () => gerarAvaliacaoPeriodo();
+}
+
+function cartaoFiltros(p, d) {
+  const f = st.filtro;
+  return `
+    <section class="cartao">
+      <header class="cartao__cab"><h2>Período analisado</h2>
+        ${temFiltroDeTipo() ? '<button class="btn btn--mini btn--fantasma" id="f-limpar">Limpar filtros</button>' : ''}
+      </header>
+      <div class="chips">
+        ${PRESETS.map(([valor, rotulo]) =>
+          `<button class="chip ${f.preset === valor ? 'chip--ativo' : ''}" data-preset="${valor}">${rotulo}</button>`).join('')}
+      </div>
+      <div class="linha2" ${f.preset === 'custom' ? '' : 'hidden'}>
+        <label>De <input type="date" id="f-de" value="${p.de}" max="${hojeISO()}"></label>
+        <label>Até <input type="date" id="f-ate" value="${p.ate}" max="${hojeISO()}"></label>
+      </div>
+      <div class="linha2">
+        <label>Refeições
+          <select id="f-ref">${TIPOS_REFEICAO.map(([valor, rotulo]) =>
+            `<option value="${valor}" ${f.tipoRef === valor ? 'selected' : ''}>${rotulo}</option>`).join('')}</select>
+        </label>
+        <label>Atividade
+          <select id="f-atv">
+            <option value="todos" ${f.tipoAtv === 'todos' ? 'selected' : ''}>Todas</option>
+            ${ATIVIDADES_MET.map(([nome]) =>
+              `<option value="${esc(nome)}" ${f.tipoAtv === nome ? 'selected' : ''}>${esc(nome)}</option>`).join('')}
+          </select>
+        </label>
+      </div>
+      <p class="nota">${f.preset === 'custom' ? '' : `${rotuloPeriodo(p)} · `}${fmtData(p.de)} a ${fmtData(p.ate)} · ${d.diasComRegistro} de ${d.diasTotal} dia(s) com registro.
+        ${temFiltroDeTipo() ? '<br>⚠️ Com filtro de tipo ativo, os totais consideram apenas o que foi selecionado.' : ''}</p>
+    </section>`;
+}
+
+function ligarFiltros(v) {
+  $$('[data-preset]', v).forEach((b) => b.onclick = () => {
+    st.filtro.preset = b.dataset.preset;
+    if (b.dataset.preset === 'custom' && !st.filtro.de) {
+      st.filtro.ate = hojeISO();
+      st.filtro.de = somarDias(hojeISO(), -29);
+    }
+    salvarFiltro(); render();
+  });
+  const de = $('#f-de', v), ate = $('#f-ate', v);
+  if (de) de.onchange = () => { st.filtro.de = de.value; salvarFiltro(); render(); };
+  if (ate) ate.onchange = () => { st.filtro.ate = ate.value; salvarFiltro(); render(); };
+  $('#f-ref', v).onchange = (e) => { st.filtro.tipoRef = e.target.value; salvarFiltro(); render(); };
+  $('#f-atv', v).onchange = (e) => { st.filtro.tipoAtv = e.target.value; salvarFiltro(); render(); };
+  const limpar = $('#f-limpar', v);
+  if (limpar) limpar.onclick = () => {
+    st.filtro.tipoRef = 'todos'; st.filtro.tipoAtv = 'todos';
+    salvarFiltro(); render();
+  };
+}
+
+function cartaoResumoPeriodo(p, d) {
+  const meta = metaCalorias();
+  const metaProt = metaProteina();
+  const semanas = d.diasTotal / 7;
+  const minSemana = Math.round(d.totalMin / Math.max(semanas, 1));
+  const delta = d.pesoFim && d.pesoIni ? d.pesoFim.peso - d.pesoIni.peso : null;
+
+  return `
+    <section class="grade-ind">
+      ${cartaoInd('Média de calorias', d.mediaKcal ? `${Math.round(d.mediaKcal)} kcal` : '—',
+        meta && d.mediaKcal ? (d.mediaKcal <= meta ? `dentro da meta (${meta})` : `acima da meta (${meta})`) : 'por dia registrado',
+        meta && d.mediaKcal ? (d.mediaKcal <= meta ? 'bom' : 'atencao') : '')}
+      ${cartaoInd('Dias na meta', d.diasNaMeta != null ? `${d.diasNaMeta}/${d.diasComRef}` : '—',
+        'dias com refeição registrada',
+        d.diasNaMeta != null && d.diasComRef ? (d.diasNaMeta >= d.diasComRef * 0.7 ? 'bom' : 'atencao') : '')}
+      ${cartaoInd('Atividade', `${d.totalMin} min`, `${minSemana} min/semana · meta 150`,
+        minSemana >= 150 ? 'bom' : 'atencao')}
+      ${cartaoInd('Gasto em atividade', kcal(d.kcalAtv), `${d.porDia.filter((x) => x.min > 0).length} dia(s) ativos`, '')}
+      ${cartaoInd('Média de água', d.mediaAgua ? `${Math.round(d.mediaAgua)} ml` : '—',
+        `meta atual: ${metaAgua()} ml/dia`, d.mediaAgua && d.mediaAgua >= metaAgua() ? 'bom' : 'atencao')}
+      ${cartaoInd('Média de proteína', d.mediaProt ? `${Math.round(d.mediaProt)} g` : '—',
+        metaProt ? `meta: ${metaProt} g/dia` : 'registre as proteínas',
+        metaProt && d.mediaProt ? (d.mediaProt >= metaProt * 0.8 ? 'bom' : 'atencao') : '')}
+      ${delta != null ? cartaoInd('Variação de peso', `${delta > 0 ? '+' : ''}${delta.toFixed(1)} kg`,
+        `${fmtData(d.pesoIni.iso)} → ${fmtData(d.pesoFim.iso)}`,
+        st.perfil?.objetivo === 'perder' ? (delta <= 0 ? 'bom' : 'atencao')
+          : st.perfil?.objetivo === 'ganhar' ? (delta >= 0 ? 'bom' : 'atencao') : '') : ''}
+      ${cartaoInd('Total consumido', kcal(d.totalKcal), `${d.refs.length} refeição(ões) no período`, '')}
+    </section>`;
+}
+
+function cartaoDiaADia(d) {
+  const dias = [...d.porDia].reverse();
+  const meta = metaCalorias();
+  return `
+    <section class="cartao">
+      <details class="detalhes">
+        <summary>Dia a dia (${d.diasComRegistro} dia(s) com registro)</summary>
+        <ul class="lista">
+          ${dias.map((x) => {
+            const vazio = !x.nRef && !x.min && !x.agua;
+            const detalhes = vazio ? 'sem registros'
+              : [x.nRef ? `${x.nRef} refeição(ões)` : '', x.agua ? `${x.agua} ml` : '',
+                 x.min ? `${x.min} min` : '', x.peso != null ? `${x.peso} kg` : '']
+                .filter(Boolean).join(' · ');
+            const selo = !x.nRef || !meta ? ''
+              : `<span class="selo selo--${x.kcal <= meta ? 'bom' : 'atencao'}">${x.kcal <= meta ? 'na meta' : 'acima'}</span>`;
+            return `
+              <li class="item" data-dia="${x.iso}">
+                <div class="item__meio"><b>${rotuloDia(x.iso)} · ${fmtData(x.iso)}</b><small>${detalhes}</small></div>
+                <div class="item__fim"><span class="item__valor">${x.nRef ? kcal(x.kcal) : ''}</span>${selo}</div>
+              </li>`;
+          }).join('')}
+        </ul>
+        <p class="nota">Toque em um dia para abrir e completar os registros.</p>
+      </details>
+    </section>`;
+}
+
+function cartaoAvaliacaoPeriodo(p) {
+  return `
+    <section class="cartao">
+      <header class="cartao__cab"><h2>Avaliação do período com IA</h2>
+        <button class="btn btn--mini btn--ia" id="b-avaliar-periodo">✨ Analisar período</button>
+      </header>
+      <div id="ia-periodo" class="prosa">${st.avaliacaoPeriodo
+        ? md(st.avaliacaoPeriodo) + `<p class="nota">Gerada em ${esc(st.avaliacaoPeriodoQuando)}.</p>`
+        : `<p class="vazio">A IA analisa apenas ${rotuloPeriodo(p).toLowerCase()} — alimentação, hidratação, proteína, atividade e peso — e aponta o que melhorou e o que merece atenção.</p>`}</div>
+    </section>`;
+}
+
+/** Avaliação por IA restrita ao período e aos filtros escolhidos. */
+async function gerarAvaliacaoPeriodo() {
+  const b = $('#b-avaliar-periodo');
+  if (b) { b.disabled = true; b.textContent = 'Analisando…'; }
+  const saida = $('#ia-periodo');
+  if (saida) saida.innerHTML = '<p class="vazio">Lendo os registros do período…</p>';
+  try {
+    const p = periodoAtual();
+    const resp = await sb.ia({ acao: 'avaliacao', dados: dadosPeriodoParaIA(p, dadosPeriodo(p)) }, 120000);
+    st.avaliacaoPeriodo = resp.avaliacao || '';
+    st.avaliacaoPeriodoQuando = `${new Date().toLocaleString('pt-BR')} · ${rotuloPeriodo(p)}`;
+    localStorage.setItem('saude.avaliacaoPeriodo', st.avaliacaoPeriodo);
+    localStorage.setItem('saude.avaliacaoPeriodoQuando', st.avaliacaoPeriodoQuando);
+    if ($('#ia-periodo')) {
+      $('#ia-periodo').innerHTML = md(st.avaliacaoPeriodo) + `<p class="nota">Gerada em ${esc(st.avaliacaoPeriodoQuando)}.</p>`;
+    }
+  } catch (e) {
+    toast('Não consegui analisar o período: ' + e.message, 'erro');
+    if ($('#ia-periodo')) $('#ia-periodo').innerHTML = '<p class="vazio">A análise falhou — tente de novo.</p>';
+  } finally {
+    const b2 = $('#b-avaliar-periodo');
+    if (b2) { b2.disabled = false; b2.textContent = '✨ Analisar período'; }
   }
-  desenharBarras($('#g-atv', v), semanas, { linhaMeta: 150, corMeta: '#18b06b' });
 }
 
 function prepararCanvas(cv) {
@@ -1338,6 +1694,53 @@ function dadosParaIA() {
       hoje_g: Math.round(proteinaDo(hojeISO())),
       meta_g_dia: metaProteina(),
       media_7d_g: mediaProteina(7) ? Math.round(mediaProteina(7)) : null,
+    },
+  };
+}
+
+/** Mesmos dados da avaliação geral, recortados no período e nos filtros da tela. */
+function dadosPeriodoParaIA(p, d) {
+  const f = st.filtro;
+  const base = dadosParaIA();
+  const semanas = Math.max(d.diasTotal / 7, 1);
+  return {
+    ...base,
+    foco_da_analise: [
+      `Analise APENAS o período de ${fmtData(p.de)} a ${fmtData(p.ate)} (${d.diasTotal} dias).`,
+      f.tipoRef !== 'todos' ? `Só foram consideradas as refeições do tipo "${f.tipoRef}".` : '',
+      f.tipoAtv !== 'todos' ? `Só foram consideradas as atividades do tipo "${f.tipoAtv}".` : '',
+      'Comente a regularidade dos registros, a evolução dentro do período (início x fim),',
+      'o que melhorou, o que piorou e o que fazer nas próximas semanas.',
+      'Os exames e o perfil servem apenas de contexto.',
+    ].filter(Boolean).join(' '),
+    periodo: {
+      de: p.de,
+      ate: p.ate,
+      dias_no_periodo: d.diasTotal,
+      dias_com_algum_registro: d.diasComRegistro,
+      dias_com_refeicao: d.diasComRef,
+      media_kcal_dia: d.mediaKcal ? Math.round(d.mediaKcal) : null,
+      total_kcal: Math.round(d.totalKcal),
+      meta_kcal_dia: metaCalorias(),
+      dias_dentro_da_meta: d.diasNaMeta,
+      media_proteina_g_dia: d.mediaProt ? Math.round(d.mediaProt) : null,
+      meta_proteina_g_dia: metaProteina(),
+      media_agua_ml_dia: d.mediaAgua ? Math.round(d.mediaAgua) : null,
+      meta_agua_ml_dia: metaAgua(),
+      minutos_atividade_total: d.totalMin,
+      minutos_atividade_por_semana: Math.round(d.totalMin / semanas),
+      kcal_gastas_em_atividade: Math.round(d.kcalAtv),
+      peso_inicial_kg: d.pesoIni?.peso ?? null,
+      peso_final_kg: d.pesoFim?.peso ?? null,
+      resumo_por_dia: d.porDia.map((x) => ({
+        dia: x.iso, kcal: Math.round(x.kcal), refeicoes: x.nRef,
+        proteina_g: Math.round(x.prot), agua_ml: x.agua,
+        atividade_min: x.min, peso_kg: x.peso,
+      })),
+      atividades: d.ats.slice(0, 60).map((a) => ({ data: a.data, tipo: a.tipo, min: a.duracao_min, kcal: a.calorias })),
+      refeicoes_exemplo: d.refs.slice(0, 60).map((r) => ({
+        dia: dataLocal(r.quando), tipo: r.tipo, descricao: r.descricao, kcal: Math.round(r.calorias),
+      })),
     },
   };
 }
@@ -1556,6 +1959,13 @@ function irPara(aba) {
   st.aba = aba;
   render();
   $('#view').scrollTop = 0;
+}
+
+/** Abre um dia específico na aba Hoje (usado pelo histórico e pelo dia a dia). */
+function irParaDia(iso) {
+  st.dia = iso;
+  st.histDias = 10;
+  irPara('hoje');
 }
 
 $$('.abas button').forEach((b) => b.onclick = () => irPara(b.dataset.aba));

@@ -175,6 +175,56 @@ input:focus, select:focus { outline: 2px solid var(--primario); outline-offset: 
 .texto-bom { color: var(--bom); }
 .texto-ruim { color: var(--ruim); }
 
+/* ---------- navegação entre dias ---------- */
+.nav-dia { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 10px; }
+.nav-dia__seta {
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--borda);
+  background: var(--fundo);
+  color: var(--texto);
+  border-radius: 12px;
+  font-size: 20px;
+  line-height: 1;
+}
+.nav-dia__seta:disabled { opacity: .35; cursor: default; }
+.nav-dia__meio { flex: 1; min-width: 140px; display: grid; gap: 3px; justify-items: center; }
+.nav-dia__meio b { font-size: 14px; }
+.nav-dia__meio input { padding: 5px 8px; text-align: center; font-size: 13px; }
+.nav-dia__hoje { flex-basis: 100%; }
+
+/* ---------- filtros de período ---------- */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+.chip {
+  border: 1px solid var(--borda);
+  background: var(--fundo);
+  color: var(--texto-2);
+  border-radius: 99px;
+  padding: 6px 12px;
+  font-size: 13px;
+}
+.chip--ativo {
+  background: color-mix(in srgb, var(--primario) 15%, transparent);
+  border-color: color-mix(in srgb, var(--primario) 40%, transparent);
+  color: var(--primario);
+  font-weight: 600;
+}
+.detalhes > summary {
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 600;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.detalhes > summary::-webkit-details-marker { display: none; }
+.detalhes > summary::after { content: '▾'; color: var(--texto-2); }
+.detalhes[open] > summary::after { content: '▴'; }
+.detalhes > summary + * { margin-top: 10px; }
+
 /* ---------- resumo do dia ---------- */
 .resumo { display: flex; align-items: center; gap: 18px; }
 .resumo__anel {
