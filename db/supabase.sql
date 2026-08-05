@@ -64,11 +64,47 @@ create table if not exists public.sau_atividades (
   criado_em timestamptz not null default now()
 );
 
+create table if not exists public.sau_agua (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  quando timestamptz not null default now(),
+  ml integer not null,
+  criado_em timestamptz not null default now()
+);
+
+-- Resumo diário vindo do app Saúde / Apple Watch (uma linha por usuário e dia).
+create table if not exists public.sau_diario (
+  id                   uuid primary key default gen_random_uuid(),
+  user_id              uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  data                 date not null default current_date,
+  passos               integer,
+  distancia_km         numeric,
+  fc_repouso           integer,
+  fc_media             integer,
+  sono_min             integer,
+  energia_repouso_kcal numeric,
+  energia_ativa_kcal   numeric,
+  exercicio_min        integer,
+  de_pe_h              integer,
+  fonte                text not null default 'Apple Watch',
+  atualizado_em        timestamptz not null default now(),
+  criado_em            timestamptz not null default now(),
+  constraint sau_diario_user_data unique (user_id, data)
+);
+
+-- Colunas usadas pela integração do atalho do iPhone.
+alter table public.sau_perfil     add column if not exists atalho_token   text;
+alter table public.sau_perfil     add column if not exists atalho_sync_em timestamptz;
+alter table public.sau_atividades add column if not exists uid            text;
+
 create index if not exists sau_medidas_user_data     on public.sau_medidas    (user_id, data);
 create index if not exists sau_exames_user_data      on public.sau_exames     (user_id, data);
 create index if not exists sau_refeicoes_user_quando on public.sau_refeicoes  (user_id, quando);
 create index if not exists sau_atividades_user_data  on public.sau_atividades (user_id, data);
+create index if not exists sau_agua_user_quando      on public.sau_agua       (user_id, quando);
 
+alter table public.sau_agua       enable row level security;
+alter table public.sau_diario     enable row level security;
 alter table public.sau_perfil     enable row level security;
 alter table public.sau_medidas    enable row level security;
 alter table public.sau_exames     enable row level security;
@@ -78,7 +114,7 @@ alter table public.sau_atividades enable row level security;
 do $$
 declare t text;
 begin
-  foreach t in array array['sau_perfil','sau_medidas','sau_exames','sau_refeicoes','sau_atividades'] loop
+  foreach t in array array['sau_perfil','sau_medidas','sau_exames','sau_refeicoes','sau_atividades','sau_agua','sau_diario'] loop
     execute format('drop policy if exists %I on public.%I', t || '_dono', t);
     execute format(
       'create policy %I on public.%I for all to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid())',

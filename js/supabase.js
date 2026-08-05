@@ -125,6 +125,10 @@ export const salvarPerfil = (dados) =>
 export const ia = (payload, timeout = 90000) =>
   pedir('/functions/v1/saude-ia', { method: 'POST', body: payload, timeout });
 
+/** Edge Function do atalho do iPhone (usada para testar a conexão do Apple Watch). */
+export const atalho = (payload, timeout = 20000) =>
+  pedir('/functions/v1/saude-atalho', { method: 'POST', body: payload, timeout });
+
 /** Edge Function de notificações (lembrete de água). */
 export const push = (payload, timeout = 30000) =>
   pedir('/functions/v1/saude-push', { method: 'POST', body: payload, timeout });

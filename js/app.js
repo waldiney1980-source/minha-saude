@@ -138,6 +138,7 @@ const st = {
   refeicoes: [],
   atividades: [],
   agua: [],
+  diario: [],          // resumo diário do app Saúde / Apple Watch
   clima: null,
   avaliacaoIA: localStorage.getItem('saude.avaliacao') || '',
   avaliacaoQuando: localStorage.getItem('saude.avaliacaoQuando') || '',
@@ -146,13 +147,14 @@ const st = {
 };
 
 async function carregarTudo() {
-  const [perfil, medidas, exames, refeicoes, atividades, agua] = await Promise.all([
+  const [perfil, medidas, exames, refeicoes, atividades, agua, diario] = await Promise.all([
     sb.listar('sau_perfil', 'select=*&limit=1'),
     sb.listar('sau_medidas', 'select=*&order=data.desc,criado_em.desc&limit=500'),
     sb.listar('sau_exames', 'select=*&order=data.desc,criado_em.desc&limit=1000'),
     sb.listar('sau_refeicoes', 'select=*&order=quando.desc&limit=800'),
     sb.listar('sau_atividades', 'select=*&order=data.desc&limit=800'),
     sb.listar('sau_agua', 'select=*&order=quando.desc&limit=1500'),
+    sb.listar('sau_diario', 'select=*&order=data.desc&limit=400').catch(() => []),
   ]);
   st.perfil = (perfil && perfil[0]) || null;
   st.medidas = medidas || [];
@@ -160,6 +162,7 @@ async function carregarTudo() {
   st.refeicoes = refeicoes || [];
   st.atividades = atividades || [];
   st.agua = agua || [];
+  st.diario = diario || [];
 }
 
 /* ============ clima e água ============ */
@@ -299,6 +302,46 @@ function metaCalorias() {
   return Math.round(g + (obj === 'perder' ? -500 : obj === 'ganhar' ? 300 : 0));
 }
 
+/* ============ Apple Watch / app Saúde ============ */
+
+const diarioDo = (dia) => st.diario.find((d) => String(d.data).slice(0, 10) === dia) || null;
+
+/** Formata os minutos de sono como "7h12". */
+const fmtSono = (min) => `${Math.floor(min / 60)}h${String(Math.round(min % 60)).padStart(2, '0')}`;
+
+/** Cartão com o que veio do Watch naquele dia (some quando não há nada). */
+function cartaoWatch(dia) {
+  const w = diarioDo(dia);
+  if (!w) return '';
+  const campos = [
+    ['Passos', w.passos != null ? Number(w.passos).toLocaleString('pt-BR') : null],
+    ['Distância', w.distancia_km != null ? `${Number(w.distancia_km).toFixed(1).replace('.', ',')} km` : null],
+    ['Exercício', w.exercicio_min ? `${w.exercicio_min} min` : null],
+    ['Energia ativa', w.energia_ativa_kcal != null ? kcal(w.energia_ativa_kcal) : null],
+    ['Energia em repouso', w.energia_repouso_kcal != null ? kcal(w.energia_repouso_kcal) : null],
+    ['FC em repouso', w.fc_repouso ? `${w.fc_repouso} bpm` : null],
+    ['FC média', w.fc_media ? `${w.fc_media} bpm` : null],
+    ['Sono', w.sono_min ? fmtSono(w.sono_min) : null],
+    ['Horas em pé', w.de_pe_h ? `${w.de_pe_h} h` : null],
+  ].filter(([, v]) => v);
+  if (!campos.length) return '';
+
+  const gastoTotal = w.energia_repouso_kcal != null && w.energia_ativa_kcal != null
+    ? Math.round(Number(w.energia_repouso_kcal) + Number(w.energia_ativa_kcal))
+    : null;
+
+  return `
+    <section class="cartao">
+      <header class="cartao__cab"><h2>Apple Watch ⌚</h2>
+        <small class="nota" style="margin:0">${w.atualizado_em ? `sincronizado ${fmtHora(w.atualizado_em)}` : ''}</small>
+      </header>
+      <div class="watch">
+        ${campos.map(([rotulo, valor]) => `<div><small>${rotulo}</small><b>${valor}</b></div>`).join('')}
+      </div>
+      ${gastoTotal ? `<p class="nota">Gasto total medido pelo Watch: <b>${gastoTotal} kcal</b> (repouso + atividade).</p>` : ''}
+    </section>`;
+}
+
 const refeicoesDo = (dia) => st.refeicoes.filter((r) => dataLocal(r.quando) === dia);
 const atividadesDo = (dia) => st.atividades.filter((a) => String(a.data).slice(0, 10) === dia);
 const somaCal = (lista) => lista.reduce((s, x) => s + (Number(x.calorias) || 0), 0);
@@ -394,8 +437,19 @@ function dadosPeriodo(p) {
   const pesos = porDia.filter((d) => d.peso != null);
   const meta = metaCalorias();
 
+  // resumo do Apple Watch no período (só entra no cálculo o dia que tem o dado)
+  const watch = st.diario.filter((w) => dentro(String(w.data).slice(0, 10)));
+  const mediaDe = (campo) => {
+    const vals = watch.map((w) => Number(w[campo])).filter((n) => Number.isFinite(n) && n > 0);
+    return vals.length ? vals.reduce((s, n) => s + n, 0) / vals.length : null;
+  };
+
   return {
-    porDia, refs, ats,
+    porDia, refs, ats, watch,
+    mediaPassos: mediaDe('passos'),
+    mediaSono: mediaDe('sono_min'),
+    mediaFcRepouso: mediaDe('fc_repouso'),
+    mediaEnergiaRepouso: mediaDe('energia_repouso_kcal'),
     diasTotal: porDia.length,
     diasComRegistro: porDia.filter((d) => d.nRef || d.min || d.agua).length,
     diasComRef: comRef.length,
@@ -564,6 +618,8 @@ function telaDia(v) {
       ${ats.length ? `<ul class="lista">${ats.map(itemAtividade).join('')}</ul>`
         : `<p class="vazio">Nenhuma atividade ${ehHoje ? 'hoje' : 'neste dia'}.</p>`}
     </section>
+
+    ${cartaoWatch(dia)}
 
     ${cartaoHistorico(dia)}`;
 
@@ -1425,6 +1481,12 @@ function cartaoResumoPeriodo(p, d) {
         st.perfil?.objetivo === 'perder' ? (delta <= 0 ? 'bom' : 'atencao')
           : st.perfil?.objetivo === 'ganhar' ? (delta >= 0 ? 'bom' : 'atencao') : '') : ''}
       ${cartaoInd('Total consumido', kcal(d.totalKcal), `${d.refs.length} refeição(ões) no período`, '')}
+      ${d.mediaPassos ? cartaoInd('Média de passos', Math.round(d.mediaPassos).toLocaleString('pt-BR'),
+        `Apple Watch · ${d.watch.length} dia(s)`, d.mediaPassos >= 8000 ? 'bom' : 'atencao') : ''}
+      ${d.mediaSono ? cartaoInd('Média de sono', fmtSono(d.mediaSono), 'por noite registrada',
+        d.mediaSono >= 420 ? 'bom' : 'atencao') : ''}
+      ${d.mediaFcRepouso ? cartaoInd('FC em repouso', `${Math.round(d.mediaFcRepouso)} bpm`, 'média do período',
+        d.mediaFcRepouso <= 70 ? 'bom' : 'atencao') : ''}
     </section>`;
 }
 
@@ -1695,6 +1757,14 @@ function dadosParaIA() {
       meta_g_dia: metaProteina(),
       media_7d_g: mediaProteina(7) ? Math.round(mediaProteina(7)) : null,
     },
+    apple_watch_ultimos_dias: st.diario.slice(0, 14).map((w) => ({
+      dia: String(w.data).slice(0, 10),
+      passos: w.passos, distancia_km: w.distancia_km,
+      exercicio_min: w.exercicio_min, energia_ativa_kcal: w.energia_ativa_kcal,
+      energia_repouso_kcal: w.energia_repouso_kcal,
+      fc_repouso: w.fc_repouso, fc_media: w.fc_media,
+      sono_min: w.sono_min,
+    })),
   };
 }
 
@@ -1732,6 +1802,13 @@ function dadosPeriodoParaIA(p, d) {
       kcal_gastas_em_atividade: Math.round(d.kcalAtv),
       peso_inicial_kg: d.pesoIni?.peso ?? null,
       peso_final_kg: d.pesoFim?.peso ?? null,
+      apple_watch: d.watch.length ? {
+        dias_com_dados: d.watch.length,
+        media_passos_dia: d.mediaPassos ? Math.round(d.mediaPassos) : null,
+        media_sono_min: d.mediaSono ? Math.round(d.mediaSono) : null,
+        media_fc_repouso: d.mediaFcRepouso ? Math.round(d.mediaFcRepouso) : null,
+        media_energia_repouso_kcal: d.mediaEnergiaRepouso ? Math.round(d.mediaEnergiaRepouso) : null,
+      } : null,
       resumo_por_dia: d.porDia.map((x) => ({
         dia: x.iso, kcal: Math.round(x.kcal), refeicoes: x.nRef,
         proteina_g: Math.round(x.prot), agua_ml: x.agua,
@@ -1806,15 +1883,18 @@ function telaPerfil(v) {
     <section class="cartao">
       <h2 class="cartao__titulo">Apple Watch (via app Saúde) ⌚</h2>
       ${p.atalho_token ? `
-        <p class="nota">Conexão ativa. O que o atalho do iPhone envia entra sozinho nas abas Hoje e Evolução, marcado como "Apple Watch".</p>
+        <p class="nota">O atalho do iPhone envia os anéis, os passos, a distância, os batimentos, o sono e a energia em repouso — tudo entra sozinho nas abas Hoje e Evolução.</p>
+        <p class="nota">Último envio recebido: <b>${p.atalho_sync_em ? new Date(p.atalho_sync_em).toLocaleString('pt-BR') : 'nenhum ainda'}</b>${st.diario.length ? ` · ${st.diario.length} dia(s) sincronizados` : ''}</p>
         <p class="nota">Código de conexão: <code class="codigo">${esc(p.atalho_token)}</code></p>
-        <div class="acoes" style="margin-top:8px">
+        <p class="nota" id="watch-teste"></p>
+        <div class="acoes" style="margin-top:8px;flex-wrap:wrap">
           <button class="btn btn--mini" id="b-guia-watch">📖 Passo a passo do atalho</button>
+          <button class="btn btn--mini btn--fantasma" id="b-testar-watch">Testar conexão</button>
           <button class="btn btn--mini btn--fantasma" id="b-copiar-token">Copiar código</button>
           <button class="btn btn--mini btn--perigo" id="b-remover-token">Desconectar</button>
         </div>`
       : `
-        <p class="nota">Traga a atividade do seu Apple Watch (minutos de exercício e calorias): o app Atalhos do iPhone lê os anéis e envia para cá automaticamente.</p>
+        <p class="nota">Traga os dados do seu Apple Watch (anéis, passos, distância, batimentos, sono e energia em repouso): o app Atalhos do iPhone lê o app Saúde e envia para cá automaticamente.</p>
         <button class="btn btn--primario" id="b-gerar-token">Conectar Apple Watch</button>`}
     </section>
 
@@ -1887,6 +1967,19 @@ function telaPerfil(v) {
   };
   const bGuia = $('#b-guia-watch', v);
   if (bGuia) bGuia.onclick = () => modalGuiaWatch();
+  const bTestar = $('#b-testar-watch', v);
+  if (bTestar) bTestar.onclick = async () => {
+    const saida = $('#watch-teste', v);
+    bTestar.disabled = true; saida.textContent = 'Testando…';
+    try {
+      // teste=true: a função interpreta e responde, mas não grava nada.
+      const r = await sb.atalho({ token: st.perfil.atalho_token, teste: true, passos: 1234, exercicio_min: 30 });
+      saida.innerHTML = `✅ Conexão respondendo. <i>${esc(r.resumo || '')}</i>`;
+    } catch (er) {
+      saida.innerHTML = `❌ ${esc(er.message)}`;
+    }
+    bTestar.disabled = false;
+  };
   const bCopiar = $('#b-copiar-token', v);
   if (bCopiar) bCopiar.onclick = async () => {
     try { await navigator.clipboard.writeText(st.perfil.atalho_token); toast('Código copiado.'); }
@@ -1909,44 +2002,70 @@ function telaPerfil(v) {
   };
 }
 
-/** Guia do atalho do iPhone que envia os treinos do Watch. */
+/** Guia do atalho do iPhone que envia os dados do app Saúde / Apple Watch. */
 function modalGuiaWatch() {
   const token = st.perfil?.atalho_token || '';
   modal(`
     <header class="modal__cab"><h2>Conectar o Apple Watch</h2>
       <button class="icone" data-fechar>✕</button></header>
     <div class="prosa" style="font-size:13.5px">
-      <p>O app <b>Atalhos</b> (já vem no iPhone) lê os anéis de atividade do Watch — <b>minutos de exercício</b> e <b>calorias em movimento</b> — e envia para cá. São só <b>2 ações</b>:</p>
-      <h3>1. Criar o atalho</h3>
+      <p>O app <b>Atalhos</b> (já vem no iPhone) lê o app <b>Saúde</b> e manda os números para cá.
+      Monte em duas etapas: primeiro a <b>parte 1</b>, que já funciona sozinha; depois acrescente
+      as métricas da <b>parte 2</b> que quiser.</p>
+
+      <h3>Parte 1 — o essencial (anéis do Watch)</h3>
       <ul>
-        <li>Abra o app <b>Atalhos</b> → aba <b>Biblioteca</b> → toque em <b>+</b> no canto superior direito (role até o topo se não aparecer)</li>
-        <li>Toque na barra <b>Buscar Ações</b>, digite <b>atividade</b> e escolha <b>"Obter Atividade Física"</b> (ícone laranja). Se ela tiver campo de data, deixe em <b>Hoje</b></li>
-        <li>Busque agora por <b>URL</b> e escolha <b>"Obter Conteúdo de URL"</b>. Ela entra logo abaixo — não precisa arrastar nada</li>
+        <li>Abra <b>Atalhos</b> → aba <b>Biblioteca</b> → <b>+</b> no canto superior direito</li>
+        <li><b>Buscar Ações</b> → digite <b>atividade</b> → escolha <b>"Obter Atividade Física"</b>. Se tiver campo de data, deixe em <b>Hoje</b></li>
+        <li><b>Buscar Ações</b> → digite <b>texto</b> → escolha a ação <b>"Texto"</b>. Dentro dela escreva exatamente estas linhas:</li>
       </ul>
-      <h3>2. Configurar o envio</h3>
+      <p><code class="codigo">token: ${esc(token)}<br>exercicio:<br>calorias:</code></p>
       <ul>
-        <li>A ação costuma vir preenchida com a variável <b>Atividade Física</b> (em azul) no lugar do endereço. Toque nela e <b>apague</b> (tecla ⌫ ou o X dela) — só então o campo aceita o endereço</li>
-        <li>Com o campo vazio, cole:<br><code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code></li>
-        <li>Toque em <b>Mostrar Mais</b> → <b>Método</b>: <b>POST</b> → <b>Corpo da Solicitação</b>: <b>JSON</b></li>
-        <li>Toque em <b>Adicionar novo campo</b> → tipo <b>Texto</b>, e crie os <b>3 campos</b> abaixo</li>
+        <li>Agora insira as variáveis: toque no fim da linha <b>exercicio:</b>, use a barra acima do teclado
+          para inserir a variável <b>Atividade Física</b> e, depois de inserida, <b>toque nela</b> e troque a
+          propriedade para <b>Exercício</b></li>
+        <li>Faça o mesmo no fim da linha <b>calorias:</b>, com a propriedade <b>Movimento</b></li>
+        <li><b>Buscar Ações</b> → <b>URL</b> → escolha <b>"Obter Conteúdo de URL"</b></li>
+        <li>Se aparecer uma variável azul no campo do endereço, <b>apague-a</b> e cole:<br>
+          <code class="codigo">https://mhqhbnfbfrfsckhcvzis.supabase.co/functions/v1/saude-atalho</code></li>
+        <li><b>Mostrar Mais</b> → <b>Método</b>: <b>POST</b> → <b>Corpo da Solicitação</b>: <b>Arquivo</b> →
+          escolha a variável <b>Texto</b> (a saída da ação Texto)</li>
       </ul>
-      <p><b>Campo 1 — token</b><br>Chave: <b>token</b> · Valor: <code class="codigo">${esc(token)}</code></p>
-      <p><b>Campo 2 — exercicio_min</b><br>Chave: <b>exercicio_min</b> · Valor: toque no campo, escolha a variável <b>Atividade Física</b> e depois toque nela para trocar a propriedade para <b>Exercício</b> (os minutos)</p>
-      <p><b>Campo 3 — calorias</b><br>Chave: <b>calorias</b> · Valor: mesma variável <b>Atividade Física</b>, com a propriedade <b>Movimento</b> (as calorias ativas)</p>
-      <p class="nota">Os nomes das propriedades podem variar um pouco conforme a versão do iOS. O importante: uma delas são os <b>minutos de exercício</b> e a outra são as <b>calorias/energia ativa</b>.</p>
+      <p class="nota">⚠️ É esse "Corpo da Solicitação: <b>Arquivo</b> + variável Texto" que faz a diferença.
+      No modo JSON, campo a campo, o Atalhos costuma enviar os valores em branco — foi o que aconteceu nas
+      tentativas anteriores.</p>
       <ul>
-        <li>Renomeie o atalho para <b>Sincronizar Watch</b> e salve</li>
+        <li>Renomeie para <b>Sincronizar Saúde</b> e salve. Rode pelo ▶︎ e toque em <b>Permitir</b> quando o iPhone pedir acesso à Saúde</li>
+        <li>A resposta aparece na tela e começa com <b>"Recebido:"</b> seguido do que entrou</li>
       </ul>
-      <h3>3. Testar</h3>
+
+      <h3>Parte 2 — passos, distância, batimentos e sono</h3>
+      <p>Para cada métrica, insira <b>3 ações antes da ação Texto</b> (busque pelo nome em negrito):</p>
+      <ol>
+        <li><b>Encontrar Amostras de Saúde</b> → toque em <b>Adicionar Filtro</b>: <i>Tipo</i> = a métrica desejada;
+          e um segundo filtro <i>Data de Início</i> <b>está hoje</b></li>
+        <li><b>Calcular Estatísticas</b> → operação <b>Soma</b> (ou <b>Média</b>, conforme a tabela) sobre as amostras</li>
+        <li><b>Definir Variável</b> → dê o nome indicado na tabela</li>
+      </ol>
+      <p><b>Passos</b> → Soma → variável <code class="codigo">Passos</code><br>
+        <b>Distância de Caminhada + Corrida</b> → Soma → <code class="codigo">Distancia</code><br>
+        <b>Frequência Cardíaca em Repouso</b> → Média → <code class="codigo">FCRepouso</code><br>
+        <b>Frequência Cardíaca</b> → Média → <code class="codigo">FCMedia</code><br>
+        <b>Energia em Repouso</b> → Soma → <code class="codigo">EnergiaRepouso</code><br>
+        <b>Análise do Sono</b> → Soma da <b>Duração</b> → <code class="codigo">Sono</code></p>
+      <p>Depois é só acrescentar as linhas correspondentes na ação <b>Texto</b>, inserindo cada variável:</p>
+      <p><code class="codigo">passos:<br>distancia:<br>fc_repouso:<br>fc_media:<br>energia_repouso:<br>sono:</code></p>
+      <p class="nota">Linha sem valor é simplesmente ignorada — dá para montar aos poucos e testar a cada
+      métrica nova. Peso também é aceito: acrescente <code class="codigo">peso:</code> com a amostra
+      <b>Peso Corporal</b> (Última, em vez de Soma).</p>
+
+      <h3>Parte 3 — automatizar</h3>
       <ul>
-        <li>Rode o atalho pelo botão ▶︎. Na primeira vez o iPhone pede acesso aos dados de Saúde — toque em <b>Permitir</b></li>
-        <li>Volte aqui, toque no botão de recarregar (canto superior direito) e veja <b>"Atividade do dia"</b> na aba Hoje</li>
+        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do Dia</b> (ex.: 22h00, Diariamente) →
+          <b>Executar Imediatamente</b> → escolha <b>Sincronizar Saúde</b></li>
       </ul>
-      <h3>4. Automatizar</h3>
-      <ul>
-        <li>Atalhos → aba <b>Automação</b> → <b>+</b> → <b>Hora do Dia</b> (ex.: 21h30, Diariamente) → <b>Executar Imediatamente</b> → escolha <b>Sincronizar Watch</b></li>
-      </ul>
-      <p class="nota">Pode rodar quantas vezes quiser por dia: o registro do dia é atualizado, nunca duplicado.</p>
+      <p class="nota">Pode rodar quantas vezes quiser por dia: o resumo do dia é atualizado, nunca duplicado.
+      Se algo não entrar, use o botão <b>Testar conexão</b> aqui no Perfil — ele diz o que o servidor entendeu.</p>
     </div>
     <footer class="modal__pe"><span class="espaco"></span>
       <button class="btn btn--primario" data-fechar>Entendi</button></footer>

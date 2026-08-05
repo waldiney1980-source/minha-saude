@@ -194,6 +194,12 @@ input:focus, select:focus { outline: 2px solid var(--primario); outline-offset: 
 .nav-dia__meio input { padding: 5px 8px; text-align: center; font-size: 13px; }
 .nav-dia__hoje { flex-basis: 100%; }
 
+/* ---------- resumo do Apple Watch ---------- */
+.watch { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+.watch > div { display: grid; gap: 1px; min-width: 0; }
+.watch small { color: var(--texto-2); font-size: 12px; }
+.watch b { font-size: 16px; }
+
 /* ---------- filtros de período ---------- */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
 .chip {
